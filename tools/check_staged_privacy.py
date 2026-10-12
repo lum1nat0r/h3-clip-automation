@@ -13,7 +13,8 @@ PRIVATE_DIRS = {'runs', 'logs', 'backups', 'work', 'input', 'output', 'outputs',
                 '__pycache__', '.venv', '.idea', '.vscode'}
 ALLOWED_SUFFIXES = {'.py', '.js', '.html', '.json', '.md', '.txt', '.sh', '.cmd'}
 SPECIAL_NAMES = {'.gitignore', '.gitattributes', 'LICENSE', 'Dockerfile', '.dockerignore', '.env.example'}
-DEPLOY_FILES = {'compose.yaml', 'deploy/h3-models', 'deploy/requirements.in', 'deploy/requirements.lock'}
+DEPLOY_FILES = {'compose.yaml', 'deploy/h3-models', 'deploy/requirements.in', 'deploy/requirements.lock',
+                '.github/workflows/publish-container.yml'}
 PATTERNS = {
     'private key': r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
     'GitHub credential': r'\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b',

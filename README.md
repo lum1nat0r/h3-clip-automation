@@ -30,13 +30,17 @@ Der optionale manuelle Timeline-Editor enthält weitere Nodes und eine eigene Ko
 
 ## Portabler Container-Stack
 
-Ein gemeinsames GPU-Image enthält unsere Anwendung, ComfyUI und Ollama. Nach dem Setzen der Zugangsdaten in der lokalen .env-Datei startet
+Ein gemeinsames GPU-Image enthält unsere Anwendung, ComfyUI und Ollama, aber keine Modelle. Der Workflow **Publish container image** baut und prüft es vor der Veröffentlichung unter `ghcr.io/lum1nat0r/h3-clip-automation`. Nach dem ersten Push muss das GHCR-Paket einmalig auf **Public** gestellt werden; siehe [Deployment](DEPLOYMENT.md#veröffentlichtes-image-ghcr).
+
+Für einen Docker-Host die Zugangsdaten in der lokalen `.env` setzen und `H3_IMAGE` auf den Digest aus der Actions-Summary stellen; `ghcr.io/lum1nat0r/h3-clip-automation:latest` ist der veränderliche Einstieg. Dann:
 
 ```text
-python tools/setup_stack.py
+python tools/setup_stack.py --pull
 ```
 
-den Stack und anschließend den interaktiven Modellassistenten. Eigene Docker-Hosts, Runpod und Vast.ai, persistente Volumes, HTTPS-Zugriff sowie beide Speichermodi sind in [DEPLOYMENT.md](DEPLOYMENT.md) beschrieben. Die bisherige lokale Installation bleibt weiterhin nutzbar.
+Der Befehl lädt das Image, startet den Stack und öffnet den interaktiven Modellassistenten. Der lokale Build bleibt bewusst unterstützt: mit dem unveränderten lokalen `H3_IMAGE`-Standard `python tools/setup_stack.py` ohne `--pull` verwenden.
+
+Das konkrete Runpod-Template, eigene Docker-Hosts und Vast.ai, persistente Volumes, HTTPS-Zugriff sowie beide Speichermodi sind in [DEPLOYMENT.md](DEPLOYMENT.md) beschrieben. Die bisherige lokale Installation bleibt weiterhin nutzbar.
 
 ## Lokaler Start
 

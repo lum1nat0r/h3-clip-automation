@@ -21,18 +21,25 @@ startet keinen Host-Treiber und verändert keine bestehenden Dienste.
    32 GiB ist lediglich das Compose-Beispiel. Dem Host und anderen Diensten muss
    ausreichend RAM verbleiben. Keine GPU verwenden, auf der bereits produktive
    Generierung läuft.
-3. Im neuen Checkout ausführen:
+3. Für das veröffentlichte Image in `.env` `H3_IMAGE` auf den Digest aus der
+   Actions-Summary setzen. Der bewegliche Einstieg ist
+   `ghcr.io/lum1nat0r/h3-clip-automation:latest`; die einmalige Public-Einrichtung
+   steht unter [Veröffentlichtes Image](#veröffentlichtes-image-ghcr). Ausführen:
 
    ```text
-   python tools/setup_stack.py
+   python tools/setup_stack.py --pull
    ```
 
-Der Befehl baut das Image, startet das eigene Compose-Projekt, wartet auf die
-Dienste und öffnet den Modellassistenten. Er lehnt ein bereits laufendes Projekt
-gleichen Namens ab. Ein neuer Name (`--project h3-test`) erhält ein eigenes Volume;
-für parallele Stacks außerdem andere Ports und eine freie GPU konfigurieren.
-`--pull` verwendet ein bereits veröffentlichtes `H3_IMAGE`; `--no-models` startet
-nur die Dienste.
+   Alternativ bewusst lokal bauen: `H3_IMAGE=h3-clip-automation:portable`
+   (unveränderter Standard) und `python tools/setup_stack.py` ohne `--pull`.
+
+Der Befehl lädt mit `--pull` das gewählte Image, andernfalls baut er lokal. Danach
+startet er das eigene Compose-Projekt, wartet auf die Dienste und öffnet den
+Modellassistenten. Er lehnt ein bereits laufendes Projekt gleichen Namens ab.
+Ein neuer Name (`--project h3-test`) erhält ein eigenes Volume; für parallele
+Stacks außerdem andere Ports und eine freie GPU konfigurieren. `--no-models`
+startet nur die Dienste. Image/Laufzeit benötigen mindestens 20 GiB freie Reserve;
+Modell- und Datenplatz kommen je nach bewusst ausgewähltem Profil zusätzlich hinzu.
 
 Standardzugänge: App `https://localhost:18080`, ComfyUI `https://localhost:18081`.
 Die Anmeldung gilt jeweils für die gesamte Oberfläche einschließlich APIs,
@@ -103,27 +110,83 @@ zugangsbeschränkten Repository muss der Account dessen Freigabe bereits besitze
 Ollama-Modelle werden in dieser Version nicht unterstützt; `OLLAMA_API_KEY` wird
 nicht an die lokale API als Download-Passwort gesendet.
 
+## Veröffentlichtes Image (GHCR)
+
+Der Workflow [Publish container image](.github/workflows/publish-container.yml)
+läuft bei jedem Push auf `main`, bei Pushes von Git-Tags `v*` sowie manuell über
+**Actions → Publish container image → Run workflow** auf `main`. Manuelle Runs
+auf anderen Refs werden übersprungen. Er baut einmal für Linux/AMD64 und startet
+vor Registry-Login und Push alle vier CPU-Smokes einschließlich echtem
+Supervisor-/ComfyUI-/Ollama-Stack und Wiedererstellungsprüfung. Keine Modelle
+oder Zugangsdaten werden ins Image eingebaut; kein zusätzlicher PAT ist nötig.
+
+Registry-Pfad: `ghcr.io/lum1nat0r/h3-clip-automation`.
+
+| Auslöser | Veröffentlichte Tags |
+| --- | --- |
+| Main-Push / manueller Main-Run | `sha-<vollständige ausgecheckte Commit-SHA>`, `latest` |
+| Push eines `v*`-Tags | `sha-<vollständige ausgecheckte Commit-SHA>`, unveränderter Git-Tag, z. B. `v1.2.3`; kein `latest` |
+
+Ungültige Container-Versionstags werden abgelehnt, nicht umbenannt. Auch bei
+annotierten Git-Tags zählt der ausgecheckte Commit. Die Tags werden nacheinander
+gepusht; die Mehrtag-Veröffentlichung ist nicht atomar. Erst die erfolgreiche
+Actions-Summary enthält veröffentlichte Tags, Package-Link und den direkt
+kopierbaren `ghcr.io/...@sha256:...`-Verweis. **Diesen Digest für reproduzierbare
+Deployments verwenden.** `latest` ist veränderlich; auch ein Commit-Tag kann durch
+erneutes Bauen überschrieben werden. Workflowcode allein ist noch kein
+veröffentlichtes Image.
+
+### Einmalig öffentlichen Zugriff einrichten
+
+Neue GHCR-Pakete sind zunächst **Private**, auch wenn das Repository öffentlich
+ist. Nach dem ersten erfolgreichen Push mit Package-Adminrechten öffnen:
+**Profil → Packages → h3-clip-automation → Package settings → Danger Zone →
+Change visibility → Public**. **GitHub erlaubt danach keine Rückkehr zu Private.**
+Erst anschließend ist der Pull ohne Registry-Credentials möglich; der Workflow
+stellt diese Sichtbarkeit nicht automatisch um.
+
+Bei einem Push-403 für ein bereits vorhandenes, unverbundenes Paket dieses mit
+dem Repository verbinden bzw. unter **Manage Actions access** das Repository
+`lum1nat0r/h3-clip-automation` mit **Write** freigeben. Keinen zusätzlichen
+Token-Fallback einrichten.
+
+Quellen: [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+[Paketsichtbarkeit und Zugriffsrechte](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+
 ## Runpod
 
-Ein Image zunächst bewusst in eine eigene Registry veröffentlichen, z. B. nach
-lokalem Build mit `docker tag` und `docker push`. Das Setup veröffentlicht nichts.
-Im Pod-Template einstellen:
+Nach erfolgreicher Veröffentlichung und Public-Umstellung das geprüfte Image
+direkt verwenden; ein eigener manueller `docker tag`/`docker push` ist nicht nötig.
+Im eigenen Pod-Template einstellen:
 
 | Einstellung | Wert |
 | --- | --- |
-| Image | Eigener Registry-Pfad mit konkretem Tag/Digest |
-| Architektur/GPU | AMD64, eine NVIDIA-GPU, CUDA 13 kompatibler Treiber |
-| Startkommando | Leer lassen; Image-Entrypoint verwenden |
-| HTTP-Ports | `8080`, `8081` |
-| TCP-Port | `22`, nur wenn SSH benötigt wird |
-| Persistentes Volume | Mount `/workspace` |
-| Env | Zugangsdaten, optional `HF_TOKEN`, `H3_TLS_MODE=proxy` |
-| SSH | `H3_SSH_PUBLIC_KEY` mit eigenem öffentlichen Schlüssel |
+| Image | Digest aus der Actions-Summary; beweglicher Einstieg `ghcr.io/lum1nat0r/h3-clip-automation:latest` |
+| Architektur/GPU | AMD64, eine NVIDIA-GPU, CUDA 13 / NVIDIA-Treiber 580 oder neuer |
+| Startkommando | Leer lassen; vorhandenen Image-Entrypoint verwenden |
+| HTTP-Ports | `8080,8081`; ausschließlich Runpod-HTTPS-Proxy verwenden |
+| Persistentes Volume | Mount `/workspace`; Network Volume für Daten über Pod-Löschung hinaus |
+| Container-Disk | Getrennt vom Modell-/Datenvolume dimensionieren; mindestens 20 GiB Reserve für Image/Laufzeit, Modellplatz zusätzlich nach Profil |
+| Env | `H3_AUTH_USER=h3`, individuell gesetztes `H3_AUTH_PASSWORD` mit mindestens 16 Zeichen, `H3_TLS_MODE=proxy`; optional `HF_TOKEN` |
+| SSH für die Ersteinrichtung | TCP-Port `22`, eigener `H3_SSH_PUBLIC_KEY`, Login als `h3` |
+| Speicherschutz | `H3_MEMORY_MODE=cgroup` bleibt Standard |
 
-Die Webzugänge über die HTTPS-Adressen des Runpod-HTTP-Proxys öffnen. Ports 8080
-und 8081 in diesem Modus nicht zusätzlich als öffentliche TCP-Ports freigeben.
-Für Daten, die eine Pod-Löschung überleben sollen, ein Network Volume verwenden;
-ein gewöhnliches Volume bleibt nur bis zur Pod-Löschung erhalten.
+Die Webzugänge über beide HTTPS-Adressen des Runpod-HTTP-Proxys öffnen. Ports
+8080 und 8081 in diesem Modus nicht zusätzlich als öffentliche TCP-Ports
+freigeben. Ohne Anmeldung müssen beide Oberflächen mit 401 abweisen; nach
+Anmeldung müssen App und ComfyUI funktionieren.
+
+Für die Ersteinrichtung per SSH als `h3` anmelden und `h3-models` ausführen.
+Profil und exakten Ollama-Modellnamen bewusst wählen; Modelle werden nicht
+automatisch vorinstalliert. SSH kann nach der Einrichtung entfallen.
+Ein Network Volume erhält Daten auch nach Pod-Löschung; ein gewöhnliches
+Pod-Volume bleibt nur bis zur Pod-Löschung erhalten.
+
+Falls der Anbieter keine geeignete endliche gemeinsame Kernelgrenze sichtbar
+macht, blockiert der Standardmodus die Generierung. Nur dann bewusst den
+schwächeren Modus `H3_MEMORY_MODE=budget` mit `H3_RAM_BUDGET_GIB` auf höchstens
+den zugewiesenen RAM setzen. Kein automatischer Fallback; Readiness ist kein
+Nachweis freigegebener Generierung.
 
 Quellen: [Custom Templates](https://docs.runpod.io/pods/templates/create-custom-template),
 [Ports](https://docs.runpod.io/pods/configuration/expose-ports),
@@ -170,7 +233,7 @@ Quellen: [Templates](https://docs.vast.ai/guides/templates/template-settings),
 | `H3_GPU_ID`, `H3_RAM_LIMIT` | Compose-GPU und gemeinsames RAM-Limit; `0`, `32g` |
 | `H3_APP_PORT`, `H3_COMFY_PORT` | Compose-Hostports; `18080`, `18081` |
 | `H3_BIND_ADDRESS` | Compose-Hostadresse, standardmäßig nur Loopback |
-| `H3_IMAGE` | Lokaler Image-Tag oder eigener Registry-Pfad |
+| `H3_IMAGE` | Lokaler Image-Tag (Standard) oder veröffentlichter GHCR-Tag/Digest; Setup mit `--pull` |
 
 Der Datenstamm enthält `app/` (Einstellungen, Jobs, Bildbibliothek), `comfy/models`,
 `comfy/input`, `comfy/output`, `comfy/user`, `ollama/models` und Download-Zwischen-
@@ -206,10 +269,14 @@ Eine Beispieldatei allein stellt keine Freigabe dar.
 Supervisor startet Dienste nach unerwartetem Prozessende erneut, aber keine
 Generierungsjobs. Nach Pod-/Container-Neustart Projekte bewusst fortsetzen; bei
 unklarer ComfyUI-Annahme gelten weiterhin die vorhandenen Wiederaufnahmeprüfungen.
-Den Stack nur im Leerlauf aktualisieren: neues Image bauen, betroffenen Stack
-gezielt neu erstellen, vorhandenes Volume beibehalten. `docker compose down -v`
-löscht Daten und gehört nicht zum normalen Update. Der lokale Shutdown-Knopf ist
-im Container ausgeblendet und sein API-Endpunkt gesperrt.
+Den Stack nur im Leerlauf aktualisieren: `H3_IMAGE` bewusst auf den neuen
+GHCR-Digest/Tag setzen, `docker compose pull h3` und
+`docker compose up -d --no-build h3` ausführen; das vorhandene Volume beibehalten.
+Auf Runpod entsprechend das Pod-Image mit demselben persistenten Volume ersetzen.
+Beim bewusst lokalen Build stattdessen `docker compose build h3` und
+`docker compose up -d --no-build h3` verwenden. `docker compose down -v` löscht
+Daten und gehört nicht zum normalen Update. Der lokale Shutdown-Knopf ist im
+Container ausgeblendet und sein API-Endpunkt gesperrt.
 
 ## Verifikation und reproduzierbare Builds
 
@@ -257,6 +324,40 @@ noch aussteht. Integration nach dem Build: beide Webzugänge müssen ohne Passwo
 abweisen, mit Passwort funktionieren; ComfyUI-WebSocket, Bild-Upload und
 MP4-Range-Wiedergabe testen. Nach Neuerstellung müssen Einstellungen und Testdateien
 im eigenen Volume erhalten sein.
+
+### Veröffentlichungs- und Runpod-Abnahme
+
+Nach dem ersten autorisierten Main-Run die vier erfolgreichen Smokes **vor**
+Login/Push, `latest`, Commit-Tag und Summary-Digest prüfen. Beim ersten tatsächlich
+gewünschten `v*`-Release prüfen, dass nur Version-/Commit-Tags veröffentlicht
+werden und `latest` unverändert bleibt; keinen künstlichen Release-Tag erzeugen.
+
+Nach Public-Umstellung den exakten Summary-Digest mit leerer temporärer
+Clientkonfiguration anonym herunterladen, z. B. in Bash:
+
+```sh
+set -euo pipefail
+EMPTY_DOCKER_CONFIG=$(mktemp -d)
+trap 'rm -rf -- "$EMPTY_DOCKER_CONFIG"' EXIT
+read -r -p 'Digest aus der Actions-Summary: ' DIGEST_REF
+docker --config "$EMPTY_DOCKER_CONFIG" pull "$DIGEST_REF"
+docker image inspect --format '{{.Os}}/{{.Architecture}} {{json .Config.Labels}}' "$DIGEST_REF"
+```
+
+Linux/AMD64 und die OCI-Labels für Source, Commit-Revision und `GPL-3.0-only`
+prüfen. Danach die vier obigen CPU-Smokes mit diesem Digest statt des lokalen
+Image-Tags und einem frischen Testvolume erneut ausführen. Ein Manifestfund
+allein beweist weder erfolgreichen Download noch einen startbaren Container.
+
+Für Runpod einen vorhandenen Account und eine ausdrücklich freigegebene
+Test-GPU verwenden; keine GPU automatisch buchen. Am Summary-Digest den Pull
+ohne Registry-Credentials, Entrypoint-/Supervisorstart, beide HTTPS-Proxyzugänge
+(ohne Anmeldung 401, mit Anmeldung funktionsfähig), SSH als `h3` und
+`h3-models --help` prüfen. Ein Testupload muss nach Pod-Neustart mit gleichem
+Volume erhalten bleiben. Anfangs fehlende Modelle sind erwartet; ein Render
+ist für diese Distributionsabnahme nicht nötig. CPU-Smokes sind kein Nachweis
+für Cloud-Proxy oder GPU.
+
 
 Die GPU-Abnahme erfolgt separat auf einer freien NVIDIA-Instanz: Modellassistent,
 Ollama-Planung, Starttake, Fortsetzung, Export mit Ton und Wiederaufnahme. Unit-Tests

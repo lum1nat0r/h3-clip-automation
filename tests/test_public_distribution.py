@@ -50,6 +50,23 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertFalse(privacy.content_issues('http://127.0.0.1:8188'))
         self.assertFalse(privacy.content_issues('https://comfy.example'))
 
+    def test_only_reviewed_publish_workflow_is_allowed(self):
+        self.assertFalse(privacy.path_issues('.github/workflows/publish-container.yml'))
+        for name in ('secrets.yaml', '.github/workflows/unreviewed.yaml'):
+            self.assertEqual(privacy.path_issues(name),
+                             ['unexpected file type; review before publication'])
+
+    def test_workflow_contents_still_report_credentials(self):
+        cases = [
+            ('GitHub credential', 'ghp_' + 'A'*30),
+            ('Hugging Face token', 'hf_' + 'B'*30),
+            ('private key', '-----BEGIN ' + 'PRIVATE KEY-----'),
+        ]
+        for label, value in cases:
+            with self.subTest(label=label):
+                workflow = 'jobs:\n  publish:\n    env:\n      TOKEN: "' + value + '"\n'
+                self.assertIn(label, privacy.content_issues(workflow))
+
     def test_template_has_no_saved_media_inputs(self):
         template = json.loads((ROOT/'H3_NVFP4_Timeline_Editor.json').read_text(encoding='utf-8'))
         for node in template['nodes']:

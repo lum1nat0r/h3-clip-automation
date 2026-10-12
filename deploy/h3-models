@@ -1,0 +1,10 @@
+#!/opt/venv/bin/python
+"""Restore only the installer environment for key-authenticated SSH sessions."""
+import json
+import os
+from pathlib import Path
+import sys
+
+env = json.loads(Path('/run/h3/model-env.json').read_text())
+os.environ.update(env)
+os.execv('/opt/venv/bin/python', ['python', '/opt/h3/model_setup.py', *sys.argv[1:]])

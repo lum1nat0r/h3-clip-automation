@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 import math
+import os
 import urllib.request
 import urllib.parse
 import webbrowser
@@ -22,8 +23,11 @@ from library import image_catalog, image_preview, job_details, job_file, remembe
 from resources import safe_new_settings, MAX_PIXELS, MAX_SIDE
 from media import MEDIA_ROUTE, playback_url, serve_video
 import hardware
+import container_memory
+from runtime_lock import exclusive
 
-BASE = Path(__file__).resolve().parent
+SOURCE = Path(__file__).resolve().parent
+BASE = Path(os.environ.get('H3_DATA_DIR', str(SOURCE))).resolve()
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
 STOP = threading.Event()
@@ -42,7 +46,8 @@ def saved_settings():
     path = BASE / "settings.json"
     c = {**DEFAULTS, **(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})}
     c['hardware_profile'] = hardware.normalize_profile(c.get('hardware_profile') or hardware.DEFAULT_PROFILE)
-    c['_verified_ram_budget_gib'] = verified_budget(c)
+    c['_ram_budget_gib'] = verified_budget(c)
+    c['_verified_ram_budget_gib'] = None if container_memory.enabled() else verified_budget(c)
     try:
         c = hardware.bind_settings(c, verified_budget(c))
     except ValueError:
@@ -51,6 +56,8 @@ def saved_settings():
 
 
 def server_safety():
+    if container_memory.enabled():
+        return container_memory.safety()
     path = BASE / 'server_safety.json'
     try:
         state = json.loads(path.read_text(encoding='utf-8'))
@@ -60,14 +67,14 @@ def server_safety():
             return state
         return {**state, 'blocked': True}
     except (OSError, ValueError):
-        return {'blocked': True, 'reason': 'Server-Speichergrenzen sind noch nicht geprüft. Siehe UNRAID_SPEICHERSCHUTZ.md.'}
+        return {'blocked': True, 'reason': 'Server-Speichergrenzen sind noch nicht geprüft. Siehe DEPLOYMENT.md.'}
 
 
 def verified_budget(c):
     safety = server_safety()
     if not safety['blocked'] and all(str(c[k]).rstrip('/') == str(safety.get(k,'')).rstrip('/')
                                     for k in ('comfy_url','ollama_url')):
-        return safety['verified_budget_gib']
+        return safety.get('budget_gib', safety.get('verified_budget_gib'))
     return None
 
 
@@ -90,15 +97,20 @@ def hardware_info(c, refresh=False):
     result = hardware.overview(c, verified_budget(c),
                               cached['objects'] if cached else None, cached['stats'] if cached else None)
     result['warning'] = warning
+    if container_memory.enabled():
+        safety = server_safety()
+        result['verified_budget_gib'] = safety.get('verified_budget_gib')
+        result['warning'] = ' '.join(x for x in (warning, safety.get('warning'), safety.get('reason')) if x)
     return result
 
 
 def save_preferences(c):
     if CURRENT['running']:
         raise JobError('Während der Generierung sind die Einstellungen gesperrt.')
-    c = normalize_settings(c)
-    c = hardware.bind_settings(c, verified_budget(c))
-    atomic_json(BASE / 'settings.json', c)
+    with exclusive(BASE):
+        c = normalize_settings(c)
+        c = hardware.bind_settings(c, verified_budget(c))
+        atomic_json(BASE / 'settings.json', c)
     return c
 
 
@@ -108,7 +120,7 @@ def job_path(name):
     return BASE / "runs" / name
 
 
-def work(runner):
+def work(runner, lease=None):
     try:
         runner.run()
         with LOCK:
@@ -121,9 +133,21 @@ def work(runner):
     finally:
         with LOCK:
             CURRENT["running"] = False
+        if lease is not None:
+            lease.__exit__(None, None, None)
 
 
 def launch(data, resume=False):
+    lease = exclusive(BASE)
+    lease.__enter__()
+    try:
+        return _launch(data, resume, lease)
+    except BaseException:
+        lease.__exit__(None, None, None)
+        raise
+
+
+def _launch(data, resume, lease):
     with LOCK:
         safety = server_safety()
         if safety['blocked']:
@@ -143,10 +167,10 @@ def launch(data, resume=False):
                 raise JobError('Die Serveradresse passt nicht zum geprüften Speicherschutz. '
                                'Nach einem Serverwechsel zuerst dessen gemeinsame RAM-Grenzen prüfen.')
         if not resume:
-            c = hardware.bind_settings(c, safety['verified_budget_gib'])
+            c = hardware.bind_settings(c, safety.get('budget_gib', safety.get('verified_budget_gib')))
         elif c.get('hardware_profile'):
             # Keep this project's choices; rebind only the trusted server ceiling.
-            c = hardware.bind_settings(c, safety['verified_budget_gib'])
+            c = hardware.bind_settings(c, safety.get('budget_gib', safety.get('verified_budget_gib')))
             runner.state['settings'] = c
         if not resume:
             remember_images(BASE, c["comfy_url"], [c["image"], *c["extra_images"]])
@@ -156,7 +180,7 @@ def launch(data, resume=False):
             atomic_json(BASE / "settings.json", runner.state['settings'])
         STOP.clear()
         CURRENT.update(running=True, job=runner.directory.name, messages=[], error=None, final_url=None)
-        threading.Thread(target=work, args=(runner,), daemon=True).start()
+        threading.Thread(target=work, args=(runner, lease), daemon=True).start()
         return {"job": runner.directory.name, 'settings': runner.state['settings']}
 
 
@@ -207,6 +231,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted_host():
             return self.send({"error": "Host nicht erlaubt."}, 403)
         route = urllib.parse.urlsplit(self.path).path
+        if route == '/healthz':
+            return self.send({'status': 'ok'})
         match = MEDIA_ROUTE.fullmatch(route)
         if match:
             try:
@@ -217,10 +243,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == 'HEAD':
             return self.send({'error': 'Nicht gefunden.'}, 404)
         if self.path == "/":
-            html = (BASE / "index.html").read_text(encoding="utf-8").replace("__SESSION_TOKEN__", TOKEN)
+            html = (SOURCE / "index.html").read_text(encoding="utf-8").replace("__SESSION_TOKEN__", TOKEN)
+            if container_memory.enabled():
+                html = html.replace('id="shutdown"', 'id="shutdown" hidden')
             return self.send(html.encode("utf-8"), content_type="text/html; charset=utf-8")
         if self.path == "/ui.js":
-            return self.send((BASE / "ui.js").read_bytes(), content_type="text/javascript; charset=utf-8")
+            return self.send((SOURCE / "ui.js").read_bytes(), content_type="text/javascript; charset=utf-8")
         if self.headers.get("X-H3-Token") != TOKEN:
             return self.send({"error": "Sitzung bitte neu laden."}, 403)
         if self.path == "/api/settings":
@@ -309,6 +337,8 @@ class Handler(BaseHTTPRequestHandler):
                 STOP.set()
                 return self.send({"message": "Stopp vorgemerkt. Der laufende ComfyUI-Take darf fertig werden."})
             if self.path == "/api/shutdown":
+                if container_memory.enabled():
+                    raise JobError('Containerbetrieb: Dienste über den Betreiber verwalten.')
                 with LOCK:
                     if CURRENT["running"]:
                         raise JobError("Bitte zuerst Anhalten wählen und warten, bis die Steuerung angehalten ist.")

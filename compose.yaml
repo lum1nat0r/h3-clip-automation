@@ -1,0 +1,37 @@
+name: h3-portable
+services:
+  h3:
+    image: ${H3_IMAGE:-h3-clip-automation:portable}
+    build: .
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: ${H3_RAM_LIMIT:-32g}
+    memswap_limit: ${H3_RAM_LIMIT:-32g}
+    shm_size: 1gb
+    ports:
+      - "${H3_BIND_ADDRESS:-127.0.0.1}:${H3_APP_PORT:-18080}:8080"
+      - "${H3_BIND_ADDRESS:-127.0.0.1}:${H3_COMFY_PORT:-18081}:8081"
+    volumes:
+      - h3-data:/workspace
+    environment:
+      H3_AUTH_USER: ${H3_AUTH_USER:?Set H3_AUTH_USER in .env}
+      H3_AUTH_PASSWORD: ${H3_AUTH_PASSWORD:?Set H3_AUTH_PASSWORD in .env}
+      H3_MEMORY_MODE: cgroup
+      H3_TLS_MODE: ${H3_TLS_MODE:-selfsigned}
+      H3_TLS_HOST: ${H3_TLS_HOST:-localhost}
+      HF_TOKEN: ${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${H3_GPU_ID:-0}"]
+              capabilities: [gpu]
+volumes:
+  h3-data:

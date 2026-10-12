@@ -57,3 +57,10 @@ class PublicDistributionTests(unittest.TestCase):
                 self.assertEqual(node['widgets_values'][0], '')
         self.assertEqual(set(template['extra']['local_workflow_provenance']),
                          {'source', 'commit', 'source_sha256', 'license'})
+
+    def test_lockfile_versions_do_not_hide_private_urls_or_comments(self):
+        version = '.'.join(('10', '4', '0', '35'))
+        self.assertFalse(privacy.content_issues('nvidia-curand==' + version + ' \\\n', requirement_versions=True))
+        self.assertTrue(privacy.content_issues('index=http://' + version + '/simple', requirement_versions=True))
+        self.assertTrue(privacy.content_issues('# host ' + version, requirement_versions=True))
+        self.assertTrue(privacy.content_issues('host==' + version))

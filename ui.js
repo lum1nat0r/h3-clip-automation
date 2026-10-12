@@ -108,7 +108,7 @@ $('pause').onclick=()=>attempt(async()=>notice((await api('pause',{})).message))
 async function poll(){
  try{
   const s=await api('status');busy=s.running;serverBlocked=s.server_safety?.blocked!==false;$('pause').disabled=!busy;
-  $('serverSafety').textContent=serverBlocked?(s.server_safety?.reason||'Server-Speicherschutz noch nicht geprüft.'):'';
+  $('serverSafety').textContent=serverBlocked?(s.server_safety?.reason||'Server-Speicherschutz noch nicht geprüft.'):(s.server_safety?.warning||'');
   for(const id of ['check','save','upload','picturepick',...fields])$(id).disabled=busy;
   hardwareBusy();
   for(const b of document.querySelectorAll('[data-resume],.picture-tile'))b.disabled=busy||b.dataset.blocked==='true'||(b.dataset.startsJob==='true'&&serverBlocked);

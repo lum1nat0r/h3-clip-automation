@@ -8,6 +8,9 @@ remain authoritative and are never changed by user-entered capacities.
 import copy
 import math
 import re
+import json
+from pathlib import Path
+import container_memory
 
 GIB = 1024 ** 3
 DEFAULT_PROFILE = dict(ram_available_gib=32.0, vram_gib=16.0, gpu_arch='auto',
@@ -44,6 +47,12 @@ PRESETS = [
     dict(id='bf16_full', title='No-Quant · BF16 Vollmodell', indexes=(4,2,1,0),
          detail='Unquantisiertes Vollmodell für große RAM- und VRAM-Budgets.'),
 ]
+
+# Pinned remote metadata is shared by the UI inventory and download assistant.
+SOURCES = {row['filename']: row for row in json.loads(
+    Path(__file__).with_name('model_sources.json').read_text(encoding='utf-8-sig'))}
+MODELS = {role: [(s[0], s[1], round(SOURCES[s[0]]['size'] / GIB, 2), *s[3:])
+                 for s in specs] for role, specs in MODELS.items()}
 
 
 def normalize_profile(profile):
@@ -85,7 +94,9 @@ def resolve_profile(profile, verified_budget=None):
 def bind_settings(c, verified_budget):
     c = copy.deepcopy(c)
     c['hardware_profile'], _ = resolve_profile(c.get('hardware_profile') or DEFAULT_PROFILE, verified_budget)
-    c['_verified_ram_budget_gib'] = verified_budget
+    c['_ram_budget_gib'] = verified_budget
+    # Container telemetry carries its own proof; a planning cap is not a kernel limit.
+    c['_verified_ram_budget_gib'] = None if container_memory.enabled() else verified_budget
     c['headroom_gb'] = c['hardware_profile']['headroom_gib']
     return c
 
@@ -182,7 +193,8 @@ def overview(c, verified_budget, objects=None, stats=None):
                 issues.append(f'{role}: Ausgewählte Modelldatei ist nicht installiert oder muss mit ihrem Unterordner ausgewählt werden.')
     gpu_name = ((stats or {}).get('devices') or [{}])[0].get('name', '')
     gpu_name = re.sub(r'^cuda:\d+\s*', '', gpu_name).split(' : ')[0]
-    return dict(settings=c, effective_ram_gib=budget, verified_budget_gib=verified_budget,
+    return dict(settings=c, effective_ram_gib=budget,
+                verified_budget_gib=None if container_memory.enabled() else verified_budget,
                 options=options, presets=presets, recommended=recommended, issues=issues,
                 gpu_arch=gpu_architecture(p, stats), gpu_name=gpu_name,
                 live=objects is not None, stats=stats)

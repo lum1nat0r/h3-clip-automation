@@ -3,6 +3,7 @@ settings.json
 server_safety.json
 image_library.json
 *.local.json
+*.local.yaml
 .env
 .env.*
 !.env.example
@@ -55,3 +56,8 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+data/
+downloads/
+.activity.lock
+*.part
+*.crt

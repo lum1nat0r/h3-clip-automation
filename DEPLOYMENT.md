@@ -1,0 +1,263 @@
+# Portabler GPU-Stack
+
+Ein Image enthält die Anwendung, ComfyUI mit den für die Automatik benötigten
+OBVPM-Timeline-/Inspire-Nodes, Ollama, FFmpeg, Nginx und Supervisor. Unterstützt:
+Linux/AMD64, eine ausgewählte NVIDIA-GPU und ein Benutzer. CUDA 13 benötigt einen
+kompatiblen NVIDIA-Treiber der Reihe 580 oder neuer. Die Modelle liegen nicht im
+Image. Der zusätzliche manuelle Timeline-Editor mit seinen optionalen Nodes ist
+nicht Bestandteil dieses Stack-Profils.
+
+## Einrichten auf einem Docker-Host
+
+Voraussetzungen: Docker Engine mit Compose, NVIDIA Container Toolkit sowie Python
+3.10+ für den Setup-Befehl. Unter Windows wird eine laufende Docker-Desktop-Linux-
+Engine mit funktionierender GPU-Weitergabe benötigt. Das Setup installiert oder
+startet keinen Host-Treiber und verändert keine bestehenden Dienste.
+
+1. `.env.example` nach `.env` kopieren. `H3_AUTH_USER` und `H3_AUTH_PASSWORD`
+   setzen; das Passwort muss mindestens 16 Zeichen lang sein. Optional `HF_TOKEN`
+   setzen. Die Datei bleibt lokal und gehört nicht ins Repository.
+2. `H3_GPU_ID` und `H3_RAM_LIMIT` passend zur verfügbaren Hardware setzen.
+   32 GiB ist lediglich das Compose-Beispiel. Dem Host und anderen Diensten muss
+   ausreichend RAM verbleiben. Keine GPU verwenden, auf der bereits produktive
+   Generierung läuft.
+3. Im neuen Checkout ausführen:
+
+   ```text
+   python tools/setup_stack.py
+   ```
+
+Der Befehl baut das Image, startet das eigene Compose-Projekt, wartet auf die
+Dienste und öffnet den Modellassistenten. Er lehnt ein bereits laufendes Projekt
+gleichen Namens ab. Ein neuer Name (`--project h3-test`) erhält ein eigenes Volume;
+für parallele Stacks außerdem andere Ports und eine freie GPU konfigurieren.
+`--pull` verwendet ein bereits veröffentlichtes `H3_IMAGE`; `--no-models` startet
+nur die Dienste.
+
+Standardzugänge: App `https://localhost:18080`, ComfyUI `https://localhost:18081`.
+Die Anmeldung gilt jeweils für die gesamte Oberfläche einschließlich APIs,
+Uploads und Medien. Ollama und die internen Backend-Ports werden nicht veröffentlicht.
+
+Das Standardzertifikat ist selbst signiert. Den SHA-256-Fingerabdruck aus
+`docker compose logs h3` über den vertrauenswürdigen Hostzugang lesen und mit dem
+Browserzertifikat vergleichen, bevor dessen Vertrauen eingerichtet wird. Das
+Zertifikat bleibt im Datenvolume erhalten; `H3_TLS_HOST` gilt bei seiner ersten
+Erzeugung. Eigene Zertifikate: siehe Env-Tabelle.
+
+Eigene Zertifikate für Compose können in einer privaten `tls.local.yaml` ergänzt
+werden (Hostpfade anpassen; die Datei wird von Git ignoriert):
+
+```yaml
+services:
+  h3:
+    environment:
+      H3_TLS_MODE: certificate
+      H3_TLS_CERT: /run/certs/server.crt
+      H3_TLS_KEY: /run/certs/server.key
+    volumes:
+      - /ABSOLUTER/PFAD/server.crt:/run/certs/server.crt:ro
+      - /ABSOLUTER/PFAD/server.key:/run/certs/server.key:ro
+```
+
+Dann `python tools/setup_stack.py --override tls.local.yaml` verwenden. Bei späteren
+Compose-Befehlen beide Dateien mit `-f compose.yaml -f tls.local.yaml` angeben.
+
+## Modelle installieren
+
+Der Assistent zeigt hardwaregeeignete H3-Profile, Quellen, Dateigrößen und
+Speicherbedarf. NVFP4-Video setzt eine erkannte Blackwell-GPU voraus. Die anderen
+Profile verwenden dieselben konservativen Richtwerte wie die Weboberfläche.
+Ein exakter öffentlicher Ollama-Modellname inklusive Tag ist erforderlich.
+
+```text
+docker compose exec h3 h3-models
+```
+
+Für ein anders benanntes Projekt `docker compose -p NAME ...` verwenden. Auf einer
+Cloud-Instanz `h3-models` im SSH-Terminal ausführen. Automatisierte Installation
+nach bewusster Auswahl ist möglich:
+
+```text
+h3-models --yes --profile int8 --ollama-model DEIN_MODELL:DEIN_TAG
+```
+
+Die vier H3-Dateien eines Profils werden aus revisionsgebundenen Hugging-Face-
+Quellen bezogen und gegen SHA-256 geprüft. Ein abgebrochener Transfer wird beim
+nächsten Aufruf vom Hugging-Face-Client fortgesetzt. Vorhandene gültige Dateien
+werden nicht erneut geladen. Beschädigte vorhandene Dateien werden erst nach
+erfolgreicher Prüfung eines Ersatzes ausgetauscht. Die Speicherprüfung reserviert
+konservativ die vollständigen fehlenden Dateien plus Ollama-Blobs und 2 GiB Reserve;
+bei teilweise geladenen Dateien kann deshalb mehr Platz als tatsächlich nötig
+verlangt werden.
+
+Der Assistent sperrt parallel laufende App-Jobs und Einstellungsänderungen.
+Er startet keinen Test-Render und lädt keine Gewichte in die GPU. ComfyUI-Aufträge
+aus der direkten Oberfläche während der Installation unterlassen; deren Queue
+wird ebenfalls auf laufende Aufträge geprüft. Erst wenn echte Modelllisten und
+Nodeschema passen, wird die Auswahl atomar gespeichert. Fehlgeschlagene Downloads
+lassen frühere Einstellungen bestehen.
+
+`HF_TOKEN` wird nur aus der Umgebung an den Download-Client übergeben. Bei einem
+zugangsbeschränkten Repository muss der Account dessen Freigabe bereits besitzen.
+Öffentliche lokale Ollama-Modelle benötigen keinen API-Key. Ollama Cloud/private
+Ollama-Modelle werden in dieser Version nicht unterstützt; `OLLAMA_API_KEY` wird
+nicht an die lokale API als Download-Passwort gesendet.
+
+## Runpod
+
+Ein Image zunächst bewusst in eine eigene Registry veröffentlichen, z. B. nach
+lokalem Build mit `docker tag` und `docker push`. Das Setup veröffentlicht nichts.
+Im Pod-Template einstellen:
+
+| Einstellung | Wert |
+| --- | --- |
+| Image | Eigener Registry-Pfad mit konkretem Tag/Digest |
+| Architektur/GPU | AMD64, eine NVIDIA-GPU, CUDA 13 kompatibler Treiber |
+| Startkommando | Leer lassen; Image-Entrypoint verwenden |
+| HTTP-Ports | `8080`, `8081` |
+| TCP-Port | `22`, nur wenn SSH benötigt wird |
+| Persistentes Volume | Mount `/workspace` |
+| Env | Zugangsdaten, optional `HF_TOKEN`, `H3_TLS_MODE=proxy` |
+| SSH | `H3_SSH_PUBLIC_KEY` mit eigenem öffentlichen Schlüssel |
+
+Die Webzugänge über die HTTPS-Adressen des Runpod-HTTP-Proxys öffnen. Ports 8080
+und 8081 in diesem Modus nicht zusätzlich als öffentliche TCP-Ports freigeben.
+Für Daten, die eine Pod-Löschung überleben sollen, ein Network Volume verwenden;
+ein gewöhnliches Volume bleibt nur bis zur Pod-Löschung erhalten.
+
+Quellen: [Custom Templates](https://docs.runpod.io/pods/templates/create-custom-template),
+[Ports](https://docs.runpod.io/pods/configuration/expose-ports),
+[Speicher](https://docs.runpod.io/pods/storage/types).
+
+## Vast.ai
+
+Eigenes Image mit festem Tag/Digest verwenden. Launch-Modus **Docker ENTRYPOINT**
+wählen, damit Supervisor gestartet wird. Ports `8080` und `8081` als TCP freigeben;
+optional `22` für den eingebauten SSH-Dienst. `H3_AUTH_USER`, `H3_AUTH_PASSWORD`,
+optional `HF_TOKEN` und `H3_SSH_PUBLIC_KEY` als private Env-Werte setzen.
+`H3_TLS_MODE=selfsigned` ist der Standard; `H3_TLS_HOST` auf den direkten Hostnamen
+oder die öffentliche IP setzen. Die externen Ports werden vom Anbieter zugeordnet.
+
+Volume am Pfad `/workspace` bereitstellen und ausreichend Platz für Image,
+Modelle und Videos reservieren. Ohne Volume ist `/workspace` lediglich ein
+Containerverzeichnis und überlebt keine Löschung der Instanz. Die SSH-Anmeldung
+erfolgt als Benutzer `h3` mit dem gesetzten Schlüssel. Anschließend `h3-models`
+aufrufen; der Wrapper erhält nur die benötigten Download-Env-Werte aus einer
+privaten Datei unter `/run`, nicht aus dem persistenten Volume.
+
+Vast.ai kann RAM oberhalb der zugeteilten Basis zeitweise zulassen. Wenn keine
+endliche gemeinsame Kernelgrenze lesbar ist, blockiert der Standardmodus. Für
+diesen Fall bewusst `H3_MEMORY_MODE=budget` und `H3_RAM_BUDGET_GIB` auf höchstens
+die zugeteilte RAM-Basis setzen. Es wird kein Limit im Host angelegt.
+
+Quellen: [Templates](https://docs.vast.ai/guides/templates/template-settings),
+[Docker-Umgebung](https://docs.vast.ai/guides/instances/docker-environment).
+
+## Konfiguration
+
+| Variable | Bedeutung / Standard |
+| --- | --- |
+| `H3_AUTH_USER`, `H3_AUTH_PASSWORD` | Web-Anmeldung, erforderlich; Passwort mindestens 16 Zeichen |
+| `HF_TOKEN` | Optionaler Hugging-Face-Downloadtoken |
+| `H3_ROOT` | Container-Datenstamm, `/workspace/h3`; absolut ohne Leerzeichen |
+| `H3_DATA_DIR` | App-Datenverzeichnis; Container setzt es auf `H3_ROOT/app` |
+| `H3_MEMORY_MODE` | `cgroup` (Standard) oder ausdrücklich `budget` |
+| `H3_RAM_BUDGET_GIB` | Erforderlich im Budgetmodus; optionaler niedrigerer Planungsdeckel im cgroup-Modus |
+| `H3_TLS_MODE` | `selfsigned`, `certificate` oder `proxy` hinter HTTPS-Terminierung |
+| `H3_TLS_HOST` | Zertifikatsname/IP bei erstmaliger Erzeugung; `localhost` |
+| `H3_TLS_CERT`, `H3_TLS_KEY` | Pfade zu gemounteten PEM-Dateien bei `certificate` |
+| `H3_SSH_PUBLIC_KEY` | Optionaler einzelner öffentlicher SSH-Schlüssel; kein Passwortzugang |
+| `H3_GPU_ID`, `H3_RAM_LIMIT` | Compose-GPU und gemeinsames RAM-Limit; `0`, `32g` |
+| `H3_APP_PORT`, `H3_COMFY_PORT` | Compose-Hostports; `18080`, `18081` |
+| `H3_BIND_ADDRESS` | Compose-Hostadresse, standardmäßig nur Loopback |
+| `H3_IMAGE` | Lokaler Image-Tag oder eigener Registry-Pfad |
+
+Der Datenstamm enthält `app/` (Einstellungen, Jobs, Bildbibliothek), `comfy/models`,
+`comfy/input`, `comfy/output`, `comfy/user`, `ollama/models` und Download-Zwischen-
+dateien. Containerdienste laufen als UID/GID 10001. Vorhandene Bind-Mount-Daten
+müssen für diese UID schreibbar sein. Keine Produktionsdaten ungeprüft einbinden.
+Der Entrypoint ändert keine Dateien einer anderen laufenden Installation.
+
+## Speicher, Neustarts und bestehende lokale Installation
+
+`cgroup` liest die sichtbare Memory-Hierarchie (v1 oder v2), berücksichtigt das
+engste Limit und die freie Reserve jedes sichtbaren Eltern-cgroups. Gemessen wird
+der gemeinsame Verbrauch aller Containerdienste. Inaktiver Dateicache wird als
+rückgewinnbar berücksichtigt; der freie Host-RAM begrenzt die verfügbare Reserve
+zusätzlich. Fehlende/ungültige Messwerte sperren die Generierung.
+
+`budget` verlangt ebenfalls lesbare gemeinsame Verbrauchsdaten und ein explizites
+Budget. Die UI zeigt den schwächeren Schutz. Das Budget wird nie als verifiziertes
+hartes Limit gespeichert. Laufzeitüberwachung verhindert keine plötzlichen OOMs.
+Ein Budgetwechsel während eines Jobs führt zum Schutzstopp vor weiterer Arbeit.
+
+Compose setzt RAM und RAM-plus-Swap auf denselben Wert. Beim Cloud-Anbieter wird
+kein Hostzugriff und kein Docker-Socket vorausgesetzt. Die Dienste teilen sich
+die GPU nacheinander; die App entlädt Ollama vor den ComfyUI-Phasen.
+
+Ohne Container bleibt `python start.py` lokal auf localhost verwendbar. Ohne
+`H3_DATA_DIR` bleiben die Daten im Projektordner. Bestehende `server_safety.json`
+wird weiterhin ausschließlich für die darin genannten externen Dienstadressen
+akzeptiert. Bei einer neuen externen Installation müssen deren gemeinsame harte
+RAM-Grenzen zuerst außerhalb der App eingerichtet und geprüft werden. Dann im
+lokalen Nachweis `verified_budget_gib`, Dienstadressen und `blocked=false` setzen.
+Eine Beispieldatei allein stellt keine Freigabe dar.
+
+Supervisor startet Dienste nach unerwartetem Prozessende erneut, aber keine
+Generierungsjobs. Nach Pod-/Container-Neustart Projekte bewusst fortsetzen; bei
+unklarer ComfyUI-Annahme gelten weiterhin die vorhandenen Wiederaufnahmeprüfungen.
+Den Stack nur im Leerlauf aktualisieren: neues Image bauen, betroffenen Stack
+gezielt neu erstellen, vorhandenes Volume beibehalten. `docker compose down -v`
+löscht Daten und gehört nicht zum normalen Update. Der lokale Shutdown-Knopf ist
+im Container ausgeblendet und sein API-Endpunkt gesperrt.
+
+## Verifikation und reproduzierbare Builds
+
+Das Basisimage ist per Digest gebunden; ComfyUI 0.37.0, die Custom Nodes und Ollama
+0.40.3 sind festgeschrieben. Ubuntu nutzt einen Snapshot-Paketindex, Python eine
+vollständige Lockdatei mit Hashes für Python 3.12/Linux-AMD64 und PyTorch 2.9.1 CUDA
+13. Kein Paketmanager und kein `git pull` wird beim Containerstart ausgeführt.
+
+```text
+python -m unittest discover -s tests -v
+node --check ui.js
+docker compose config --quiet
+docker compose build
+python tools/setup_stack.py --no-models
+```
+
+Zusätzliche Integration im frisch gebauten Image, ohne GPU und ohne externe
+Netzwerkverbindungen (ausschließlich Wegwerfcontainer, keine Produktionsvolumes):
+
+```text
+docker run --rm --network none --entrypoint python h3-clip-automation:portable /opt/h3/tests/container_smoke.py
+docker run --rm --network none --entrypoint python h3-clip-automation:portable /opt/h3/tests/comfy_import_smoke.py
+```
+
+Der erste Test verwendet echte App, Nginx und SSH mit simulierten KI-APIs. Der
+zweite startet das echte ComfyUI auf CPU und prüft die benötigten Nodes sowie
+Start-, Fortsetzungs- und Phasengraphen gegen deren tatsächliche Schemas.
+
+Den gesamten Supervisor-Stack einschließlich echter Ollama-/ComfyUI-Dienste auf
+CPU und seine Persistenz nach Container-Neuerstellung prüfen:
+
+```text
+docker volume create h3-disposable-verification
+docker run --rm --network none --memory 8g --memory-swap 8g --cpus 1 -e NVIDIA_VISIBLE_DEVICES=void -v h3-disposable-verification:/workspace --entrypoint python h3-clip-automation:portable /opt/h3/tests/stack_smoke.py init
+docker run --rm --network none --memory 8g --memory-swap 8g --cpus 1 -e NVIDIA_VISIBLE_DEVICES=void -v h3-disposable-verification:/workspace --entrypoint python h3-clip-automation:portable /opt/h3/tests/stack_smoke.py check
+docker volume rm h3-disposable-verification
+```
+
+Dafür ein **neues**, ausschließlich für den Test bestimmtes Volume verwenden.
+Die Prüfung erzeugt keine Gewichte und reicht keine Generierungsaufträge ein.
+
+Die Readiness-Prüfung prüft App, Ollama und benötigte ComfyUI-Nodes ohne Modelle zu
+laden. Eine frische Instanz ist dadurch erreichbar, während die Modellinstallation
+noch aussteht. Integration nach dem Build: beide Webzugänge müssen ohne Passwort
+abweisen, mit Passwort funktionieren; ComfyUI-WebSocket, Bild-Upload und
+MP4-Range-Wiedergabe testen. Nach Neuerstellung müssen Einstellungen und Testdateien
+im eigenen Volume erhalten sein.
+
+Die GPU-Abnahme erfolgt separat auf einer freien NVIDIA-Instanz: Modellassistent,
+Ollama-Planung, Starttake, Fortsetzung, Export mit Ton und Wiederaufnahme. Unit-Tests
+und ein erfolgreicher Image-Build sind kein Nachweis dieser GPU-Abnahme.

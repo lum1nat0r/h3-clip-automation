@@ -13,6 +13,7 @@ import time
 import threading
 from contextlib import contextmanager
 from hardware import resolve_profile
+import container_memory
 
 GIB = 1024 ** 3
 MAX_PIXELS = 736 * 416
@@ -38,6 +39,9 @@ def ram_policy(values, settings=None):
     These thresholds supplement the separately verified hard kernel limit.
     """
     total = values['ram_total_gib']
+    if container_memory.enabled():
+        p, _ = resolve_profile(settings['hardware_profile'], total)
+        return p['ram_start_gib'], p['ram_stop_gib'], values['ram_source']
     if settings and settings.get('hardware_profile'):
         limit = settings.get('_verified_ram_budget_gib', CONTAINER_BUDGET_GIB)
         p, _ = resolve_profile(settings['hardware_profile'], limit)
@@ -70,7 +74,7 @@ def safe_new_settings(settings):
     c = copy.deepcopy(settings)
     c['width'], c['height'] = fit_resolution(c['width'], c['height'])
     if c.get('hardware_profile'):
-        c['hardware_profile'], _ = resolve_profile(c['hardware_profile'], c.get('_verified_ram_budget_gib', 24))
+        c['hardware_profile'], _ = resolve_profile(c['hardware_profile'], c.get('_ram_budget_gib', c.get('_verified_ram_budget_gib', 24)))
         c['headroom_gb'] = c['hardware_profile']['headroom_gib']
     else:
         c['headroom_gb'] = min(4.0, max(3.0, c['headroom_gb']))
@@ -124,6 +128,14 @@ class MemoryGuard:
                 raise ValueError('Das NVFP4-Profil benötigt eine GPU der 16-GB-Klasse.')
             values = {k + '_gib': round(v / GIB, 3) for k, v in values.items()}
             values.update(gpu=device['name'], comfyui_version=system.get('comfyui_version', ''))
+            if container_memory.enabled():
+                snapshot = container_memory.snapshot()
+                expected = self.c.get('_ram_budget_gib')
+                if expected is None or abs(expected - snapshot['budget_gib']) > .001:
+                    raise ValueError('RAM-Budget hat sich geändert. Projekt vor Fortsetzung erneut prüfen.')
+                values.update(ram_total_gib=snapshot['ram_total_gib'], ram_free_gib=snapshot['ram_free_gib'],
+                              ram_source=snapshot['source'] + '/' + snapshot['mode'],
+                              hard_limit_verified=snapshot['hard_limit_verified'])
             start_ram, stop_ram, scope = ram_policy(values, self.c)
             vram_start = self.c['hardware_profile']['vram_start_gib'] if self.c.get('hardware_profile') else START_VRAM_GIB
             values.update(ram_scope=scope, ram_start_min_gib=start_ram, ram_stop_min_gib=stop_ram,

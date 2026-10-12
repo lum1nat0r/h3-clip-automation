@@ -6,3 +6,10 @@
 *.md text eol=lf
 *.sh text eol=lf
 *.cmd text eol=crlf
+*.yaml text eol=lf
+*.lock text eol=lf
+*.in text eol=lf
+Dockerfile text eol=lf
+deploy/h3-models text eol=lf
+.env.example text eol=lf
+.dockerignore text eol=lf

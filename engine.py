@@ -116,8 +116,13 @@ def relative_path(value):
 
 
 def normalize_settings(settings):
+    import container_memory
     c = copy.deepcopy(DEFAULTS)
     c.update(settings)
+    if container_memory.enabled():
+        for key, expected in (('comfy_url', DEFAULTS['comfy_url']), ('ollama_url', DEFAULTS['ollama_url'])):
+            if str(c[key]).rstrip('/') != expected:
+                raise JobError('Containerbetrieb verwendet ausschließlich die internen Dienste.')
     for key in ("comfy_url", "ollama_url"):
         c[key] = str(c[key]).strip().rstrip("/")
         u = urllib.parse.urlsplit(c[key])
@@ -542,7 +547,7 @@ def preflight(c, call=request, require_image=True):
     if require_image and not c["image"]:
         raise JobError("Bitte einmalig ein Startbild auswählen oder hochladen.")
     if c.get('hardware_profile'):
-        c['hardware_profile'], budget = resolve_profile(c['hardware_profile'], c.get('_verified_ram_budget_gib', 24))
+        c['hardware_profile'], budget = resolve_profile(c['hardware_profile'], c.get('_ram_budget_gib', c.get('_verified_ram_budget_gib', 24)))
         c['headroom_gb'] = c['hardware_profile']['headroom_gib']
         issues = selection_issues(c, budget, call(c['comfy_url'], '/system_stats', timeout=8))
         if issues:

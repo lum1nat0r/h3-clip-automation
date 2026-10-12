@@ -16,4 +16,7 @@ bereitgestellt; siehe `LICENSE`. Öffentliche Quellen- und Autorenverweise des
 ursprünglichen Workflows bleiben erhalten.
 
 ComfyUI, Ollama, die verwendeten Custom Nodes und Modellgewichte sind eigenständige
-Projekte und unterliegen ihren jeweiligen Lizenzen. Sie werden nicht mitgeliefert.
+Projekte und unterliegen ihren jeweiligen Lizenzen. Der optionale Container-Build
+installiert ComfyUI, Ollama und die benötigten Custom Nodes aus den im Dockerfile
+festgeschriebenen Quellen; deren Lizenzdateien bleiben im Image erhalten.
+Modellgewichte werden nicht mitgeliefert, sondern separat heruntergeladen.

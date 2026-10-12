@@ -15,7 +15,7 @@ Lokale Weboberfläche für MiniMax H3: Ein Master-Prompt beschreibt einen 30–6
 
 ## Voraussetzungen
 
-Der Controller verwendet ausschließlich die Python-Standardbibliothek und benötigt Python 3.10 oder neuer. Es werden keine eigenen ComfyUI-Nodes installiert. ComfyUI und Ollama müssen separat eingerichtet sein.
+Der Controller verwendet ausschließlich die Python-Standardbibliothek und benötigt Python 3.10 oder neuer. Es werden keine eigenen ComfyUI-Nodes installiert. Der portable Container installiert ComfyUI und Ollama mit; beim bisherigen lokalen Start müssen beide Dienste separat eingerichtet sein.
 
 Für den automatischen Pfad werden benötigt:
 
@@ -24,17 +24,27 @@ Für den automatischen Pfad werden benötigt:
 - [ComfyUI Inspire Pack](https://github.com/ltdrdata/ComfyUI-Inspire-Pack) für die Zwischenspeicherung zwischen den drei Berechnungsphasen.
 - H3-Modelle für Video, Textencoder, Video-VAE und Audio-VAE. Modelle sind nicht enthalten.
 - Ein installiertes Ollama-Modell, das die Chat-API und strukturierte JSON-Ausgaben unterstützt.
-- Geprüfte harte Speichergrenzen für die Dienste; siehe [Speicherschutz](UNRAID_SPEICHERSCHUTZ.md).
+- Geprüfte harte Speichergrenzen für die Dienste; siehe [Speicherschutz](DEPLOYMENT.md).
 
 Der optionale manuelle Timeline-Editor enthält weitere Nodes und eine eigene Kompatibilitätsprüfung. Er ist für den Start der Automatik nicht erforderlich.
 
-## Start
+## Portabler Container-Stack
+
+Ein gemeinsames GPU-Image enthält unsere Anwendung, ComfyUI und Ollama. Nach dem Setzen der Zugangsdaten in der lokalen .env-Datei startet
+
+```text
+python tools/setup_stack.py
+```
+
+den Stack und anschließend den interaktiven Modellassistenten. Eigene Docker-Hosts, Runpod und Vast.ai, persistente Volumes, HTTPS-Zugriff sowie beide Speichermodi sind in [DEPLOYMENT.md](DEPLOYMENT.md) beschrieben. Die bisherige lokale Installation bleibt weiterhin nutzbar.
+
+## Lokaler Start
 
 1. Unter Windows `START_AUTOMATIK.cmd` öffnen; alternativ im Projektordner `python start.py` ausführen.
 2. Die Oberfläche öffnet sich unter `http://127.0.0.1:8765/`. Für einen anderen Port: `python start.py --port 8766`.
 3. Eigene Dienstadressen und den **exakten Namen eines bereits installierten Ollama-Modells** eintragen. `YOUR_OLLAMA_MODEL` ist ein Platzhalter.
 4. Unter **Dein System & Modelle** verfügbare Speichermengen eintragen, System prüfen und passende installierte Modelle übernehmen. Die Vorgaben sind Beispielwerte und keine Hardware-Erkennung.
-5. Die Servergrenzen nach der [Einrichtungsanleitung](UNRAID_SPEICHERSCHUTZ.md) prüfen. Eine frische Installation sperrt die Generierung, bis ein lokaler Nachweis hinterlegt ist.
+5. Die Servergrenzen nach der [Einrichtungsanleitung](DEPLOYMENT.md) prüfen. Eine frische Installation sperrt die Generierung, bis ein lokaler Nachweis hinterlegt ist.
 6. Referenzbild auswählen, den gesamten Clip beschreiben, Dauer einstellen und **Gesamten Clip erzeugen** starten.
 
 Die Einstellungen werden automatisch in `settings.json` gespeichert. Optional kann `settings.example.json` als Ausgangspunkt dorthin kopiert werden. Die Beispiele verbinden sich nur mit localhost und enthalten keine betriebsfertige Serverfreigabe.
@@ -52,7 +62,7 @@ Das NVFP4-Profil verwendet folgende Dateien:
 | Video-VAE | `minimax_h3_video_vae_int8_convrot.safetensors` |
 | Audio-VAE | `minimax_h3_audio_vae_fp32.safetensors` |
 
-Die Oberfläche bietet außerdem installierte INT8-/FP8-/BF16-Varianten an. Empfehlungen sind konservative Anwendungsrichtwerte, keine gemessenen Speicherhöchstwerte. Für das NVFP4-Videomodell prüft die Empfehlung eine Blackwell-GPU. Andere Quantisierungen können andere Laufzeit- und Hardwareanforderungen haben. Fehlende Modelle werden nicht automatisch heruntergeladen.
+Die Oberfläche bietet außerdem installierte INT8-/FP8-/BF16-Varianten an. Empfehlungen sind konservative Anwendungsrichtwerte, keine gemessenen Speicherhöchstwerte. Für das NVFP4-Videomodell prüft die Empfehlung eine Blackwell-GPU. Andere Quantisierungen können andere Laufzeit- und Hardwareanforderungen haben. Der Container-Modellassistent installiert fehlende Modelle nach interaktiver Auswahl; die Weboberfläche lädt keine Gewichte herunter.
 
 Modellquellen: [Comfy-Org MiniMax H3](https://huggingface.co/Comfy-Org/MiniMax-H3) und [FenomAI MiniMax H3](https://huggingface.co/FenomAI/MiniMax-H3). Die Gewichte behalten ihre jeweiligen Lizenzen.
 
@@ -80,7 +90,7 @@ git diff --cached
 
 Die Prüfung sucht typische Secrets, private Adressen, persönliche Rechnerpfade und versehentlich gestagte Laufzeitdateien. Sie ergänzt die manuelle Durchsicht; beliebige persönliche Freitexte kann sie nicht zuverlässig erkennen. `git add -f` umgeht `.gitignore` und sollte für Laufzeitdateien nicht verwendet werden. Auch Commit-Autorname und -E-Mail sind bei öffentlichen Commits sichtbar; dafür bei Bedarf die GitHub-noreply-Adresse in der eigenen Git-Konfiguration verwenden.
 
-Die Oberfläche bindet ausschließlich an localhost. Dienstzugangsdaten in URLs werden abgelehnt. Es wird keine Telemetrie an einen externen Analysedienst gesendet. Verbindungen erfolgen zu den selbst eingestellten Diensten; Dokumentationslinks öffnen erst beim Anklicken externe Seiten.
+Beim lokalen Start bindet die Oberfläche ausschließlich an localhost. Im Container stellt Nginx App und ComfyUI mit Anmeldung bereit; siehe [Deployment](DEPLOYMENT.md). Dienstzugangsdaten in URLs werden abgelehnt. Es wird keine Telemetrie an einen externen Analysedienst gesendet. Verbindungen erfolgen zu den selbst eingestellten Diensten; Dokumentationslinks öffnen erst beim Anklicken externe Seiten.
 
 ## Entwicklung und Tests
 

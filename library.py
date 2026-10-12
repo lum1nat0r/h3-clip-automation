@@ -106,6 +106,12 @@ def job_details(directory):
     if not (root / "job.json").is_file():
         raise JobError("Projekt wurde nicht gefunden.")
     state = read_json(root / "job.json")
+    prompt_review_prompts = []
+    if state.get("review_prompts"):
+        for index in range(len(state.get("slots", []))):
+            file = root / f"take_{index + 1:02d}_prompt.txt"
+            if file.is_file():
+                prompt_review_prompts.append({"take": index + 1, "text": file.read_text(encoding="utf-8")})
     attempts = []
     for file in sorted((root / "ollama").glob("*_attempt_*.json"), reverse=True):
         record = read_json(file)
@@ -136,4 +142,7 @@ def job_details(directory):
     return {"id": state["id"], "status": state["status"], "error": state.get("error"),
             "log": log, "has_log": file.exists(), "has_plan": (root / "plan.json").exists(),
             "attempts": attempts, "legacy": not state.get("diagnostics_version"),
-            'has_resources': (root / 'resources.jsonl').is_file()}
+            'has_resources': (root / 'resources.jsonl').is_file(),
+            "prompt_review_enabled": bool(state.get("review_prompts")),
+            "prompt_review_pending": bool(state.get("prompt_review_pending")),
+            "prompt_review_prompts": prompt_review_prompts}

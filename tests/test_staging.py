@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from test_automation import FakeServices, SCHEMA, sample_plan
 import engine as e
+from library import job_details
 from staging import split_graph, cache_keys, cache_present, clear_cache
 
 
@@ -47,6 +48,30 @@ class StagingTests(unittest.TestCase):
         self.assertEqual(len(self.fake.prompts),7)
         self.assertEqual(sum(route=='/api/chat' for route,_ in self.fake.calls),1)
         self.assertFalse(self.fake.cache)
+
+    def test_prompt_review_pauses_before_comfy_and_resumes_with_saved_prompts(self):
+        runner=e.Runner(Path(self.temp.name)/'review',lambda _:None,call=self.fake,poll_seconds=0)
+        runner.new({'image':'test.png'},'Quiet scene',review_prompts=True)
+        with self.assertRaises(e.Paused):runner.run()
+        self.assertEqual(runner.state['status'],'paused')
+        self.assertTrue(runner.state['prompt_review_pending'])
+        self.assertFalse(self.fake.encodings)
+        self.assertFalse(self.fake.prompts)
+        self.assertEqual(sum(route=='/api/chat' for route,_ in self.fake.calls),1)
+        details=job_details(runner.directory)
+        self.assertTrue(details['prompt_review_pending'])
+        self.assertEqual(len(details['prompt_review_prompts']),7)
+        self.assertTrue(all(item['text'] for item in details['prompt_review_prompts']))
+
+        resumed=e.Runner(runner.directory,lambda _:None,call=self.fake,poll_seconds=0)
+        self.assertTrue(resumed.confirm_prompt_review())
+        resumed.run()
+        self.assertEqual(resumed.state['status'],'complete')
+        self.assertTrue(resumed.state['prompt_review_confirmed'])
+        self.assertFalse(resumed.state['prompt_review_pending'])
+        self.assertEqual(len(self.fake.encodings),7)
+        self.assertEqual(len(self.fake.prompts),7)
+        self.assertEqual(sum(route=='/api/chat' for route,_ in self.fake.calls),1)
 
     def test_completed_decode_is_recovered_without_duplicate_files(self):
         self.fake.drop_decoding_response=True

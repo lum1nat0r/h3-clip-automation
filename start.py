@@ -176,8 +176,10 @@ def _launch(data, resume, lease):
             remember_images(BASE, c["comfy_url"], [c["image"], *c["extra_images"]])
             name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(4)
             runner = Runner(job_path(name), log, STOP.is_set)
-            runner.new(c, data["master_prompt"])
+            runner.new(c, data["master_prompt"], review_prompts=data.get("review_prompts") is True)
             atomic_json(BASE / "settings.json", runner.state['settings'])
+        else:
+            runner.confirm_prompt_review()
         STOP.clear()
         CURRENT.update(running=True, job=runner.directory.name, messages=[], error=None, final_url=None)
         threading.Thread(target=work, args=(runner, lease), daemon=True).start()
@@ -249,6 +251,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(html.encode("utf-8"), content_type="text/html; charset=utf-8")
         if self.path == "/ui.js":
             return self.send((SOURCE / "ui.js").read_bytes(), content_type="text/javascript; charset=utf-8")
+        if route == "/favicon.svg":
+            return self.send((SOURCE / "favicon.svg").read_bytes(), content_type="image/svg+xml; charset=utf-8")
         if self.headers.get("X-H3-Token") != TOKEN:
             return self.send({"error": "Sitzung bitte neu laden."}, 403)
         if self.path == "/api/settings":
@@ -262,7 +266,8 @@ class Handler(BaseHTTPRequestHandler):
                 if path.exists():
                     s = json.loads(path.read_text(encoding="utf-8"))
                     result.update(status=s["status"], done=len(s["takes"]), total=len(s["slots"]),
-                                  final_url=playback_url(s, TOKEN))
+                                  final_url=playback_url(s, TOKEN),
+                                  prompt_review_pending=bool(s.get("prompt_review_pending")))
             return self.send(result)
         if self.path == "/api/jobs":
             jobs = []
@@ -271,6 +276,7 @@ class Handler(BaseHTTPRequestHandler):
                     s = json.loads(path.read_text(encoding="utf-8"))
                     jobs.append({"id": s["id"], "status": s["status"], "master_prompt": s["master_prompt"],
                                  "done": len(s["takes"]), "total": len(s["slots"]), "final_url": playback_url(s, TOKEN),
+                                 "prompt_review_pending": bool(s.get("prompt_review_pending")),
                                  'resume_blocked': bool(s.get('safety_hold')) or
                                  s['settings']['width'] * s['settings']['height'] > MAX_PIXELS or
                                  max(s['settings']['width'], s['settings']['height']) > MAX_SIDE})

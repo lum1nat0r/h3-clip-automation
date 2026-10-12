@@ -15,7 +15,7 @@ function modelOptions(c){for(const role of modelFields){const select=$(role);sel
 function fill(c){config=c;modelOptions(c);for(const f of fields)$(f).value=c[f]??'';for(const f of hardwareFields)$(f).value=c.hardware_profile?.[f]??'';selectedPicture();memoryHint()}
 function memoryHint(){const w=Number($('width').value),h=Number($('height').value);if(!(w>0&&h>0))return;const s=Math.min(1,Math.sqrt(736*416/(w*h)),736/Math.max(w,h));const a=Math.max(128,Math.floor(w*s/32)*32),b=Math.max(128,Math.floor(h*s/32)*32);$('memoryHint').textContent=`Neue Projekte werden mit ${a} × ${b} Pixeln erzeugt.${a!==w||b!==h?' Die größere Eingabe wird für das 16-GB-Profil verkleinert.':''}`}
 $('width').oninput=memoryHint;$('height').oninput=memoryHint;
-function hardwareBusy(){for(const id of [...hardwareFields,...modelFields,'headroom_gb','hardwareSave','hardwareRefresh'])$(id).disabled=busy||hardwareLoading;for(const b of document.querySelectorAll('[data-preset]'))b.disabled=busy||hardwareLoading||b.dataset.available!=='true';$('run').disabled=busy||serverBlocked||hardwareBlocked||hardwareLoading}
+function hardwareBusy(){for(const id of [...hardwareFields,...modelFields,'headroom_gb','hardwareSave','hardwareRefresh','reviewPrompts'])$(id).disabled=busy||hardwareLoading;for(const b of document.querySelectorAll('[data-preset]'))b.disabled=busy||hardwareLoading||b.dataset.available!=='true';$('run').disabled=busy||serverBlocked||hardwareBlocked||hardwareLoading}
 async function hardwareAttempt(fn){try{await fn()}catch(e){$('hardwareIssues').textContent=e.message}}
 function renderHardware(info){
  hardwareData=info;hardwareBlocked=info.issues.length>0;
@@ -103,7 +103,7 @@ function renderPictures(){
 $('picturepick').onclick=()=>{if(busy)return;$('picturePicker').showModal();$('pictureSearch').value='';loadPictures()};
 $('pictureClose').onclick=()=>$('picturePicker').close();$('pictureRefresh').onclick=loadPictures;
 $('pictureSearch').oninput=()=>{pictureLimit=24;renderPictures()};$('pictureMore').onclick=()=>{pictureLimit+=24;renderPictures()};
-$('run').onclick=()=>attempt(async()=>{if(busy)return;const m=$('master').value.trim();if(!m)throw Error('Bitte den gesamten Clip in einer Zeile beschreiben.');$('run').disabled=true;try{const r=await api('start',{settings:values(),master_prompt:m});fill(r.settings);notice('Automatischer Ablauf mit Speicherprüfung gestartet.');await poll()}catch(e){$('run').disabled=false;throw e}});
+$('run').onclick=()=>attempt(async()=>{if(busy)return;const m=$('master').value.trim();if(!m)throw Error('Bitte den gesamten Clip in einer Zeile beschreiben.');$('run').disabled=true;try{const review=$('reviewPrompts').checked;const r=await api('start',{settings:values(),master_prompt:m,review_prompts:review});fill(r.settings);notice(review?'Ollama plant den Clip. Danach kannst du alle Take-Prompts prüfen.':'Automatischer Ablauf mit Speicherprüfung gestartet.');await poll()}catch(e){$('run').disabled=false;throw e}});
 $('pause').onclick=()=>attempt(async()=>notice((await api('pause',{})).message));
 async function poll(){
  try{
@@ -113,7 +113,7 @@ async function poll(){
   hardwareBusy();
   for(const b of document.querySelectorAll('[data-resume],.picture-tile'))b.disabled=busy||b.dataset.blocked==='true'||(b.dataset.startsJob==='true'&&serverBlocked);
   if(!s.job)return;
-  $('progresscard').classList.remove('hidden');$('status').textContent=labels[s.status]||s.status;$('count').textContent=`${s.done||0} / ${s.total||0} Takes`;
+  $('progresscard').classList.remove('hidden');$('status').textContent=s.prompt_review_pending?'Ollama-Prompts prüfen':labels[s.status]||s.status;$('reviewPromptsOpen').classList.toggle('hidden',!s.prompt_review_pending);$('count').textContent=`${s.done||0} / ${s.total||0} Takes`;
   $('progress').max=s.total||1;$('progress').value=s.done||0;$('log').textContent=s.messages.join('\n');
   if(s.error&&s.error!==lastError)notice(s.error,true);lastError=s.error||'';
   if(s.job!==lastJob){lastJob=s.job;lastFinal='';$('result').classList.add('hidden');$('video').removeAttribute('src')}
@@ -127,16 +127,17 @@ async function jobs(){
  const list=await api('jobs');$('jobs').replaceChildren();
  if(!list.length){const p=document.createElement('p');p.textContent='Noch keine Projekte.';$('jobs').append(p)}
  for(const j of list){
-  const row=document.createElement('div');row.className='job';const p=document.createElement('p');p.textContent=`${labels[j.status]||j.status} · ${j.done}/${j.total} Takes · ${j.id}\n${j.master_prompt.slice(0,150)}`;p.style.whiteSpace='pre-wrap';row.append(p);
+  const row=document.createElement('div');row.className='job';const p=document.createElement('p');p.textContent=`${j.prompt_review_pending?'Ollama-Prompts prüfen':labels[j.status]||j.status} · ${j.done}/${j.total} Takes · ${j.id}\n${j.master_prompt.slice(0,150)}`;p.style.whiteSpace='pre-wrap';row.append(p);
   const actions=document.createElement('div');actions.className='job-actions';actions.append(button('Logs & Ollama',()=>openJob(j.id)));
   if(j.final_url){actions.append(button('Video anzeigen',()=>{showVideo(j.final_url,j.id);$('result').scrollIntoView({block:'center'})}));const a=document.createElement('a');a.className='linkbutton';a.textContent='Video öffnen';a.href=j.final_url;a.target='_blank';a.rel='noopener';actions.append(a)}
+  else if(j.prompt_review_pending){actions.append(button('Prompts prüfen',()=>openJob(j.id)))}
   else{const b=button(j.resume_blocked?'Fortsetzen gesperrt':'Fortsetzen',()=>attempt(async()=>{if(busy||j.resume_blocked)return;b.disabled=true;await api('resume',{job:j.id});notice('Projekt wird fortgesetzt.');await poll()}));b.dataset.resume='';b.dataset.startsJob='true';b.dataset.blocked=String(!!j.resume_blocked);b.disabled=busy||j.resume_blocked||serverBlocked;b.title=j.resume_blocked?'Auflösung zu groß oder Speicherfehler: Servergrenzen prüfen und neues Projekt vorbereiten.':'';actions.append(b)}
   const copy=button('Als neues Projekt vorbereiten',()=>attempt(async()=>{if(busy)return;const r=await api('job-copy',{job:j.id});fill(r.settings);await refreshHardware(false);$('master').value=r.master_prompt;notice('Prompt und Startbild übernommen, Auflösung an das Speicherprofil angepasst. Mit „Gesamten Clip erzeugen“ einen neuen Job starten.');$('master').focus();$('master').scrollIntoView({block:'center'})}));copy.dataset.resume='';copy.disabled=busy;actions.append(copy);
   row.append(actions);$('jobs').append(row);
  }
 }
 async function openJob(id){
- activeJob=id;fileRequest++;activeFile=null;$('fileViewer').classList.add('hidden');$('jobError').textContent='';$('jobLog').textContent='Lade Projektprotokoll …';$('attemptList').replaceChildren();$('attemptHint').textContent='';
+ activeJob=id;fileRequest++;activeFile=null;$('fileViewer').classList.add('hidden');$('promptReview').classList.add('hidden');$('promptReviewList').replaceChildren();$('reviewContinue').classList.add('hidden');$('jobError').textContent='';$('jobLog').textContent='Lade Projektprotokoll …';$('attemptList').replaceChildren();$('attemptHint').textContent='';
  $('jobLogDownload').classList.add('hidden');$('jobPlan').classList.add('hidden');$('jobResources').classList.add('hidden');$('jobSubtitle').textContent=id;
  if(!$('jobDialog').open)$('jobDialog').showModal();await loadJob();
 }
@@ -145,6 +146,9 @@ async function loadJob(){
  try{
   const j=await api('job-details',{job:id});if(id!==activeJob)return;
   $('jobSubtitle').textContent=`${j.id} · ${labels[j.status]||j.status}`;$('jobError').textContent=j.error||'';
+  const reviewed=j.prompt_review_prompts||[];const reviewSection=$('promptReview');reviewSection.classList.toggle('hidden',!reviewed.length);$('promptReviewNote').textContent=j.prompt_review_pending?'Prüfe die vollständigen Prompts. ComfyUI hat noch keinen Take gestartet. Fortsetzen bestätigt diese Texte und startet den Clip.':'Die folgenden gespeicherten Texte sind die Prompts, die für die Takes verwendet werden.';
+  $('promptReviewList').replaceChildren();for(const item of reviewed){const article=document.createElement('article');article.className='prompt-review-item';const title=document.createElement('h4');title.textContent=`Take ${item.take}`;const text=document.createElement('pre');text.textContent=item.text;article.append(title,text);$('promptReviewList').append(article)}
+  const continueButton=$('reviewContinue');continueButton.classList.toggle('hidden',!j.prompt_review_pending);continueButton.disabled=busy||serverBlocked;
   $('jobLog').textContent=j.log||'Für dieses Projekt ist noch kein dauerhafter Verlauf gespeichert.';
   $('jobLogDownload').classList.toggle('hidden',!j.has_log);$('jobPlan').classList.toggle('hidden',!j.has_plan);
   $('jobResources').classList.toggle('hidden',!j.has_resources);
@@ -167,6 +171,8 @@ async function showJobFile(job,filename){
 }
 function download(file){const url=URL.createObjectURL(new Blob([file.content],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=activeJob+'_'+file.filename.replaceAll('/','_');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 $('jobClose').onclick=()=>$('jobDialog').close();
+$('reviewPromptsOpen').onclick=()=>{if(lastJob)openJob(lastJob)};
+$('reviewContinue').onclick=()=>attempt(async()=>{if(busy||serverBlocked)return;$('reviewContinue').disabled=true;try{await api('resume',{job:activeJob});notice('Prompt-Prüfung bestätigt. Projekt wird fortgesetzt.');$('jobDialog').close();await poll()}catch(e){$('reviewContinue').disabled=false;throw e}});
 $('jobReload').onclick=async()=>{const file=activeFile?.filename;await loadJob();if(file)await showJobFile(activeJob,file)};
 $('jobLogDownload').onclick=async()=>{try{download(await api('job-file',{job:activeJob,file:'events.jsonl'}))}catch(e){$('jobError').textContent=e.message}};
 $('jobPlan').onclick=()=>showJobFile(activeJob,'plan.json');$('fileDownload').onclick=()=>{if(activeFile)download(activeFile)};

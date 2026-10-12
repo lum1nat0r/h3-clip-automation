@@ -595,7 +595,7 @@ class Runner:
         if self.stopped() and not getattr(self, 'finish_current_take', False):
             raise Paused('Angehalten. Fertige Takes und der gespeicherte Plan bleiben erhalten.')
 
-    def new(self, settings, master):
+    def new(self, settings, master, review_prompts=False):
         requested = normalize_settings(settings)
         c = safe_new_settings(requested)
         master = master.strip()
@@ -605,8 +605,43 @@ class Runner:
                       "seed": secrets.randbits(50) if c["seed"] == -1 else c["seed"],
                       "slots": schedule(c["seconds"], c), "plan": None, "takes": [],
                       "pending": None, "status": "created", "final_path": None,
+                      "review_prompts": review_prompts is True, "prompt_review_pending": False,
+                      "prompt_review_confirmed": False,
                       "requested_resolution": [requested['width'], requested['height']]}
         self.save()
+
+    def prompt_for_take(self, index):
+        s = self.state
+        path = self.directory / f"take_{index + 1:02d}_prompt.txt"
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+        text = render_prompt(s["plan"], s["plan"]["segments"][index], s["slots"][index], s["settings"])
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+        return text
+
+    def prepare_prompt_review(self):
+        s = self.state
+        for index in range(len(s["slots"])):
+            self.prompt_for_take(index)
+        s["prompt_review_pending"] = True
+        s["pause_reason"] = "prompt_review"
+        self.save()
+
+    def confirm_prompt_review(self):
+        s = self.state
+        if not s.get("prompt_review_pending"):
+            return False
+        if not s.get("plan") or any(
+                not (self.directory / f"take_{index + 1:02d}_prompt.txt").is_file()
+                for index in range(len(s.get("slots", [])))):
+            raise JobError("Die Ollama-Prompts für diese Prüfung sind nicht vollständig gespeichert.")
+        s["prompt_review_pending"] = False
+        s["prompt_review_confirmed"] = True
+        s.pop("pause_reason", None)
+        self.save()
+        return True
 
     def recover_submission(self):
         s, c = self.state, self.state["settings"]
@@ -781,6 +816,11 @@ class Runner:
                 time.sleep(2)
             else:
                 raise JobError("Ollama hat das Planungsmodell noch nicht entladen. Speicher vor Fortsetzung prüfen.")
+            if (s.get("review_prompts") and not s.get("prompt_review_confirmed")
+                    and not s.get("prompt_review_pending")):
+                self.prepare_prompt_review()
+            if s.get("prompt_review_pending"):
+                raise Paused("Ollama hat die Prompts erstellt. Bitte prüfen und danach im Projekt fortsetzen.")
             self.finish_current_take = bool(s.get('pending') or s.get('encoding') or s.get('sampling'))
             if s["pending"]:
                 self.log("Prüfe bereits gestarteten Auftrag …")
@@ -794,7 +834,7 @@ class Runner:
                 self.finish_current_take = True
                 i = len(s["takes"])
                 slot = s["slots"][i]
-                text = render_prompt(s["plan"], s["plan"]["segments"][i], slot, c)
+                text = self.prompt_for_take(i)
                 prev = s["takes"][-1]["clip"] if s["takes"] else None
                 graph = build_graph(c, text, slot, s["folder"], (s["seed"] + i) % 2**63, prev)
                 objects = self.call(c["comfy_url"], "/object_info")
@@ -816,7 +856,6 @@ class Runner:
                 atomic_json(self.directory / f"take_{i+1:02d}_encode_api.json", encode)
                 atomic_json(self.directory / f"take_{i+1:02d}_api.json", sample)
                 atomic_json(self.directory / f"take_{i+1:02d}_decode_api.json", decode)
-                (self.directory / f"take_{i+1:02d}_prompt.txt").write_text(text, encoding="utf-8")
                 if not ready:
                     self.guard.prepare('before_encoding')
                     self.log(f"Take {i+1}/{len(s['slots'])}: Prompt und Referenzbild vorbereiten …")

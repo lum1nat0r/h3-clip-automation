@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="de">
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>H3 · Ein Prompt, ein Clip</title>
 <style>
 :root{font-family:system-ui,sans-serif;color:#e9ede9;background:#101612;color-scheme:dark;font-size:15px}
@@ -18,6 +19,7 @@ progress{width:100%;height:8px;accent-color:#c1e9a6}pre{font:13px/1.7 ui-monospa
 @media(max-width:640px){main{padding:26px 16px}.card{padding:20px}.row{grid-template-columns:1fr}.job{align-items:flex-start;flex-direction:column}}
 dialog{color:inherit;background:#17201a;border:1px solid #526156;border-radius:16px;width:min(940px,94vw);max-height:90vh;padding:24px;overflow:auto}dialog::backdrop{background:#000a}dialog h2{margin:0;font-size:24px}.dialog-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.dialog-head button{padding:8px 14px}.picture-tools{display:flex;gap:12px;margin:20px 0}.picture-tools input{flex:1;min-width:0}.picture-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-top:16px}.picture-tile{padding:0;overflow:hidden;text-align:left;background:#101813;color:#d6e1d8;border:2px solid #344039;min-width:0}.picture-tile[aria-pressed=true]{border-color:#c1e9a6}.picture-tile img{display:block;width:100%;height:132px;object-fit:contain;background:#0b100d}.picture-tile span{display:block;padding:9px;font-size:12px;font-weight:400;overflow-wrap:anywhere}.picture-tile small{display:block;color:#a1b5a7;margin-top:5px}.picture-tile .missing{height:132px;padding:30px 12px;text-align:center;color:#a1b5a7}.selected-picture{display:flex;align-items:center;gap:12px;margin-top:10px;min-height:52px}.selected-picture img{width:76px;height:60px;object-fit:contain;border:1px solid #344039;border-radius:6px}.selected-picture span{font-size:12px;overflow-wrap:anywhere}.job-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}.log-section{border-top:1px solid #344039;padding-top:16px;margin-top:20px}.attempt-list{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.attempt-list button{font-size:12px;padding:9px 12px}.attempt-list button[aria-pressed=true]{border-color:#c1e9a6;color:#c1e9a6}.diagnostic-error{color:#ffb9ae;white-space:pre-wrap;overflow-wrap:anywhere}.viewer pre{background:#101813;border-radius:8px;padding:16px;max-height:45vh}.dialog-note{font-size:13px;color:#a1b5a7}button:focus-visible,a:focus-visible{outline:2px solid #bee79d;outline-offset:3px}.log-section h3{font-size:16px}.dialog-head h2{overflow-wrap:anywhere}@media(max-width:640px){dialog{padding:18px}.picture-tools{flex-wrap:wrap}.picture-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.job-actions{width:100%}}
 h2{font-size:23px;letter-spacing:-.025em;margin:0 0 8px}a{color:#c1e9a6}.row>div{min-width:0}select{max-width:100%;text-overflow:ellipsis}.model-recommendations{margin:20px 0}.model-option{border-top:1px solid #344039;padding:16px 0}.model-option .statusbar{align-items:center}.model-option p{margin:6px 0}.model-option strong{font-size:15px}.model-option .recommended{color:#c1e9a6}#hardwareCard details{margin-top:20px}#hardwareCard .notice{margin-top:10px}@media(max-width:640px){.model-option .statusbar{align-items:flex-start;flex-direction:column;gap:10px}}
+.checkbox-row{display:flex;align-items:flex-start;gap:10px;margin:18px 0 0;line-height:1.5}.checkbox-row input{width:auto;margin:4px 0 0;accent-color:#c1e9a6}.checkbox-row span{font-size:13px;color:#c3cfc6}.prompt-review-item{border-top:1px solid #344039;padding:14px 0}.prompt-review-item h4{margin:0 0 8px;font-size:14px}.prompt-review-item pre{background:#101813;border-radius:8px;padding:14px;max-height:260px}
 </style>
 <main>
  <div class="eyebrow">MiniMax H3 · Lokal</div>
@@ -68,7 +70,8 @@ h2{font-size:23px;letter-spacing:-.025em;margin:0 0 8px}a{color:#c1e9a6}.row>div
   <div class="actions"><button class="secondary" id="picturepick">Bild auswählen</button><button class="secondary" id="upload">Startbild hochladen</button><input id="file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden"><span class="hint">Vorhandene Bilder wiederverwenden; die Auswahl bleibt gespeichert.</span></div>
   <p id="memoryHint" class="hint" aria-live="polite"></p>
   <p class="hint">Version 1.0.7 · Drei getrennte Speicherphasen pro Take und Modellfreigabe dazwischen. Die oben gespeicherten Schwellwerte gelten für neue Projekte; die harte Servergrenze bleibt zusätzlich aktiv.</p>
-  <div class="actions"><button id="run" disabled>Gesamten Clip erzeugen</button><button class="secondary" id="pause" disabled>Nach diesem Take anhalten</button><span class="hint">Keine Bestätigung zwischen den Takes.</span></div>
+  <label class="checkbox-row" for="reviewPrompts"><input id="reviewPrompts" type="checkbox"><span>Nach Ollama pausieren und alle erstellten Take-Prompts prüfen, bevor ComfyUI startet</span></label>
+  <div class="actions"><button id="run" disabled>Gesamten Clip erzeugen</button><button class="secondary" id="pause" disabled>Nach diesem Take anhalten</button><span class="hint">Optional kannst du die Prompts vor dem ersten ComfyUI-Start prüfen.</span></div>
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
  </section>
  <details class="card" id="settings"><summary>Adressen, Modell und Bildeinstellungen</summary>
@@ -90,6 +93,7 @@ h2{font-size:23px;letter-spacing:-.025em;margin:0 0 8px}a{color:#c1e9a6}.row>div
  </details>
  <section class="card hidden" id="progresscard" aria-live="polite">
   <div class="statusbar"><strong id="status">Vorbereitung</strong><span id="count" class="muted"></span></div>
+  <div class="actions"><button id="reviewPromptsOpen" class="secondary hidden">Erstellte Prompts prüfen</button></div>
   <p class="small muted">Lass die lokale Steuerung geöffnet. Bei einem Verbindungsabbruch lässt sich das Projekt unten fortsetzen.</p>
   <progress id="progress" max="1" value="0"></progress><pre id="log"></pre>
  </section>
@@ -108,6 +112,7 @@ h2{font-size:23px;letter-spacing:-.025em;margin:0 0 8px}a{color:#c1e9a6}.row>div
 <dialog id="jobDialog" aria-labelledby="jobTitle">
  <div class="dialog-head"><h2 id="jobTitle">Logs &amp; Ollama</h2><button class="secondary" id="jobClose" aria-label="Projektprotokoll schließen">Schließen</button></div>
  <p id="jobSubtitle" class="dialog-note"></p><div id="jobError" class="diagnostic-error" role="status"></div>
+ <section id="promptReview" class="log-section hidden"><h3>Erstellte Take-Prompts</h3><p id="promptReviewNote" class="dialog-note"></p><div id="promptReviewList"></div><button id="reviewContinue" class="hidden">Mit diesen Prompts fortsetzen</button></section>
  <div class="actions"><button id="jobReload" class="secondary">Aktualisieren</button><button id="jobLogDownload" class="secondary hidden">Verlauf herunterladen</button><button id="jobPlan" class="secondary hidden">Gültigen Plan anzeigen</button><button id="jobResources" class="secondary hidden">Speicherprotokoll anzeigen</button></div>
  <section class="log-section"><h3>Projektverlauf</h3><pre id="jobLog"></pre></section>
  <section class="log-section"><h3>Ollama-Antworten</h3><p id="attemptHint" class="dialog-note"></p><div id="attemptList" class="attempt-list"></div></section>

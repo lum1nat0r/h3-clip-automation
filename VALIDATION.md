@@ -5,7 +5,7 @@ Stand: 12. Oktober 2026. Umsetzung im separaten Worktree auf
 
 ## Durchgeführt
 
-- Alle 116 Python-Tests bestanden, einschließlich bestehender lokaler Abläufe,
+- Alle 117 Python-Tests bestanden, einschließlich bestehender lokaler Abläufe,
   Datenpfade, cgroup v1/v2, Budgetmodus, fehlender Messwerte, Installationssperre,
   abgebrochener Downloads, Prüfsummenfehler und unveränderter Einstellungen bei Fehlern.
 - JavaScript-Syntax und Compose-Konfiguration geprüft; Veröffentlichungskontrolle

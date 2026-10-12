@@ -9,6 +9,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+import urllib.error
 from unittest.mock import Mock, patch
 
 import container_memory as cm
@@ -23,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('container_entrypoint', ROOT / 'deploy/entrypoint.py')
 entrypoint = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entrypoint)
+health_spec = importlib.util.spec_from_file_location('healthcheck', ROOT / 'deploy/healthcheck.py')
+healthcheck = importlib.util.module_from_spec(health_spec)
+health_spec.loader.exec_module(healthcheck)
 
 
 class MemoryTests(unittest.TestCase):
@@ -214,6 +218,27 @@ class InstallerTests(unittest.TestCase):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_readiness_requires_both_proxy_auth_challenges(self):
+        nodes = dict.fromkeys(('MiniMaxH3ReferenceToVideo', 'H3VramHeadroom',
+                              'CacheBackendData //Inspire', 'RetrieveBackendData //Inspire'), {})
+        for port in (8080, 8081):
+            for status in (200, 401, 403, 503):
+                with self.subTest(port=port, status=status):
+                    def open_url(url, **_):
+                        if url.endswith('/object_info'):
+                            return io.BytesIO(json.dumps(nodes).encode())
+                        if any(f':{p}/' in url for p in (8080, 8081)):
+                            code = status if f':{port}/' in url else 401
+                            if code != 200:
+                                raise urllib.error.HTTPError(url, code, 'test', {}, io.BytesIO())
+                        return io.BytesIO(b'{}')
+                    with patch.object(healthcheck.urllib.request, 'urlopen', side_effect=open_url):
+                        if status == 401:
+                            healthcheck.check()
+                        else:
+                            with self.assertRaises(ValueError):
+                                healthcheck.check()
+
     def test_auth_is_required_before_any_runtime_changes(self):
         for env in ({}, {'H3_AUTH_USER':'-option','H3_AUTH_PASSWORD':'a'*20},
                     {'H3_AUTH_USER':'test','H3_AUTH_PASSWORD':'a'*20+'\n'}):

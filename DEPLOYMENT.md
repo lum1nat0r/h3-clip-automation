@@ -251,8 +251,8 @@ docker volume rm h3-disposable-verification
 Dafür ein **neues**, ausschließlich für den Test bestimmtes Volume verwenden.
 Die Prüfung erzeugt keine Gewichte und reicht keine Generierungsaufträge ein.
 
-Die Readiness-Prüfung prüft App, Ollama und benötigte ComfyUI-Nodes ohne Modelle zu
-laden. Eine frische Instanz ist dadurch erreichbar, während die Modellinstallation
+Die Readiness-Prüfung prüft App, Ollama, benötigte ComfyUI-Nodes und die Anmeldung
+beider Nginx-Listener, ohne Modelle zu laden. Eine frische Instanz ist dadurch erreichbar, während die Modellinstallation
 noch aussteht. Integration nach dem Build: beide Webzugänge müssen ohne Passwort
 abweisen, mit Passwort funktionieren; ComfyUI-WebSocket, Bild-Upload und
 MP4-Range-Wiedergabe testen. Nach Neuerstellung müssen Einstellungen und Testdateien

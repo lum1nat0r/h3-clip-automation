@@ -61,3 +61,6 @@ downloads/
 .activity.lock
 *.part
 *.crt
+
+# Repowise local index, vector store, and caches
+.repowise/

@@ -1,0 +1,15 @@
+{
+  "comfy_url": "http://127.0.0.1:8188",
+  "ollama_url": "http://127.0.0.1:11434",
+  "ollama_model": "YOUR_OLLAMA_MODEL",
+  "seconds": 30,
+  "width": 736,
+  "height": 416,
+  "image": "",
+  "hardware_profile": {
+    "ram_available_gib": 32,
+    "vram_gib": 16,
+    "gpu_arch": "auto",
+    "threshold_mode": "auto"
+  }
+}

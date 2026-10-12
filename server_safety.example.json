@@ -1,0 +1,7 @@
+{
+  "blocked": true,
+  "verified_budget_gib": null,
+  "comfy_url": "http://127.0.0.1:8188",
+  "ollama_url": "http://127.0.0.1:11434",
+  "reason": "Gemeinsame Server-Speichergrenzen vor der ersten Generierung einrichten und prüfen. Siehe UNRAID_SPEICHERSCHUTZ.md."
+}

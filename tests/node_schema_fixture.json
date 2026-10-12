@@ -1,0 +1,1607 @@
+{
+  "H3LoadMCtx": {
+    "input": {
+      "required": {
+        "clip": [
+          [
+            "h3_automatik/test/take.mp4"
+          ],
+          {
+            "tooltip": "A video in the output folder with an mctx sidecar (saved by the H3 MCtx save nodes)."
+          }
+        ],
+        "create_pins": [
+          [
+            "none",
+            "extend (pin tail)",
+            "prepend (pin head)"
+          ],
+          {
+            "default": "none",
+            "tooltip": "Also emit a ready-made pin spec for this clip: 'extend' pins its tail so the next generation continues after it; 'prepend' pins its head so the next generation leads into it. Off-grid edges of continuation clips are auto-shifted to the nearest latent-grade cut (the log states the seam frame). Wire pin_specs straight to H3MCtxApplyPins. Use H3MCtxPinSpec instead for explicit at_frame cuts, audio windows or multi-pin stacks."
+          }
+        ],
+        "pin_window": [
+          [
+            "39",
+            "22",
+            "5",
+            "56",
+            "90",
+            "1"
+          ],
+          {
+            "default": "39",
+            "tooltip": "Context window for create_pins. 39 is the everyday choice (and the shortest masked-legal window); 90 pins more motion at the cost of more of the new clip."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "create_pins",
+        "pin_window"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "OBVPM_H3_MCTX",
+      "OBVPM_H3_PINSPECS",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "mctx",
+      "pin_specs",
+      "latent"
+    ],
+    "name": "H3LoadMCtx",
+    "display_name": "H3 MCtx Load (obvpm)",
+    "description": "Loads ONLY a clip's motion-context bundle (latents + lineage) from its verified sidecar -- the video is never decoded, so this is the fast path for extend graphs. Refuses when no sidecar pairs with the file (unlike the full loader, there is no pixel route to fall back to here). The `latent` output hands the stored AV latent straight back to a sampler or an upscaler, with no VAE round trip to lose grade to.",
+    "python_module": "custom_nodes.comfyui-obvpm-timeline",
+    "category": "obvpm/h3",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "output_tooltips": [
+      "The clip's latents + header for the pins pipeline.",
+      "Ready-made pin spec per create_pins; empty when none.",
+      "The clip's stored AV latent (video + audio), exactly as the sampler produced it. Split it with Separate AV Latent to reach the video stream on its own."
+    ],
+    "search_aliases": []
+  },
+  "CLIPLoader": {
+    "input": {
+      "required": {
+        "clip_name": [
+          [
+            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+          ]
+        ],
+        "type": [
+          [
+            "stable_diffusion",
+            "stable_cascade",
+            "sd3",
+            "stable_audio",
+            "mochi",
+            "ltxv",
+            "pixart",
+            "cosmos",
+            "lumina2",
+            "wan",
+            "hidream",
+            "chroma",
+            "ace",
+            "omnigen2",
+            "qwen_image",
+            "hunyuan_image",
+            "flux2",
+            "ovis",
+            "longcat_image",
+            "cogvideox",
+            "lens",
+            "pixeldit",
+            "ideogram4",
+            "boogu",
+            "krea2",
+            "joyimage",
+            "mage",
+            "minimax",
+            "yue2"
+          ]
+        ]
+      },
+      "optional": {
+        "device": [
+          [
+            "default",
+            "cpu"
+          ],
+          {
+            "advanced": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip_name",
+        "type"
+      ],
+      "optional": [
+        "device"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CLIP"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CLIP"
+    ],
+    "name": "CLIPLoader",
+    "display_name": "Load CLIP",
+    "description": "Recipes:\nsd: clip-l\nstable cascade: clip-g\nsd3: t5 xxl / clip-g / clip-l\nstable audio: t5 base\nmochi: t5 xxl\ncogvideox: t5 xxl (226-token padding)\ncosmos: old t5 xxl\nlumina2: gemma 2 2B\nwan: umt5 xxl\nhidream: llama-3.1 (Recommend) or t5\nomnigen2: qwen vl 2.5 3B\njoyimage: qwen3-vl 8B\nlens: gpt-oss-20b\npixeldit: gemma 2 2B elm\nminimax: MiniMax H3 Qwen3-VL or Music3 Qwen/RVQ",
+    "python_module": "nodes",
+    "category": "model/loaders",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "BasicGuider": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "conditioning": [
+          "CONDITIONING",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "conditioning"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "GUIDER"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "GUIDER"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "BasicGuider",
+    "display_name": "Basic Guider",
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/guiders",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "LoadImage": {
+    "input": {
+      "required": {
+        "image": [
+          [
+            "test.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK"
+    ],
+    "name": "LoadImage",
+    "display_name": "Load Image",
+    "description": "",
+    "python_module": "nodes",
+    "category": "image",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": [
+      "load image",
+      "open image",
+      "import image",
+      "image input",
+      "upload image",
+      "read image",
+      "image loader"
+    ],
+    "essentials_category": "Basics"
+  },
+  "MiniMaxH3ReferenceToVideo": {
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "prompt": [
+          "STRING",
+          {
+            "multiline": true,
+            "dynamicPrompts": true
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 1344,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 768,
+            "min": 32,
+            "max": 16384,
+            "step": 32
+          }
+        ],
+        "length": [
+          "INT",
+          {
+            "tooltip": "Frame count at 24 fps, (124 = ~5s, trained range is ~124-362)",
+            "default": 124,
+            "min": 5,
+            "max": 3600,
+            "step": 17
+          }
+        ],
+        "ref_image_size": [
+          "COMBO",
+          {
+            "tooltip": "Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower.",
+            "default": "match",
+            "multiselect": false,
+            "options": [
+              "match",
+              "max"
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE. Without it reference images/videos only condition the text encoder."
+          }
+        ],
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "Audio VAE. Without it reference audio only conditions the text encoder."
+          }
+        ],
+        "ref_images": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_image": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference image (downscaled to 2048 short edge if larger, never upscaled)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_image_",
+              "min": 0,
+              "max": 9
+            }
+          }
+        ],
+        "ref_videos": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video": [
+                    "IMAGE",
+                    {
+                      "tooltip": "Reference video frames at 24 fps (2-15s)"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_video_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_video_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Soundtrack of the same-numbered reference video"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_video_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ],
+        "ref_audios": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {
+                  "ref_audio": [
+                    "AUDIO",
+                    {
+                      "tooltip": "Standalone reference audio"
+                    }
+                  ]
+                }
+              },
+              "prefix": "ref_audio_",
+              "min": 0,
+              "max": 3
+            }
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "prompt",
+        "width",
+        "height",
+        "length",
+        "ref_image_size"
+      ],
+      "optional": [
+        "vae",
+        "audio_vae",
+        "ref_images",
+        "ref_videos",
+        "ref_video_audios",
+        "ref_audios"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "LATENT"
+    ],
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "MiniMaxH3ReferenceToVideo",
+    "display_name": "MiniMax H3 Reference to Video",
+    "description": "<Picture i> / <Video k> / <Audio j> reference conditioning for MiniMax H3. Use the same tags when prompting.",
+    "python_module": "comfy_extras.nodes_minimax_h3",
+    "category": "model/conditioning/minimax",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ModelAttentionBackend": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The model to patch."
+          }
+        ],
+        "attention": [
+          "COMBO",
+          {
+            "display_name": "backend",
+            "tooltip": "The dense attention backend. Comfy Kitchen attention uses quantized INT8 attention and is available only on Nvidia and AMD GPUs.",
+            "default": "pytorch attention",
+            "multiselect": false,
+            "options": [
+              "pytorch attention",
+              "comfy kitchen attention"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "attention"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "model"
+    ],
+    "output_tooltips": [
+      "The model with the selected attention backend."
+    ],
+    "output_matchtypes": null,
+    "name": "ModelAttentionBackend",
+    "display_name": "Model Attention Backend",
+    "description": "Selects the dense attention implementation for the model. When used with Block Sparse Attention, this backend is used whenever sparse attention is inactive or unsupported.",
+    "python_module": "comfy_extras.nodes_model_advanced",
+    "category": "model/patch",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": true,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "H3ResultPreview": {
+    "input": {
+      "required": {
+        "path": [
+          "STRING",
+          {
+            "forceInput": true,
+            "tooltip": "The saved clip's path -- wire the path output of an H3 MCtx Save node."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "path"
+      ]
+    },
+    "is_input_list": false,
+    "output": [],
+    "output_is_list": [],
+    "output_name": [],
+    "name": "H3ResultPreview",
+    "display_name": "H3 MCtx Result Preview (obvpm)",
+    "description": "Mini timeline of a just-saved take and the clip it continues: wire a Save node's path output in, and after each run this shows the take beside its parent (extend) or its target (prepend), seam derived from the sidecars, playable as one seamless preview.",
+    "python_module": "custom_nodes.comfyui-obvpm-timeline",
+    "category": "obvpm/h3",
+    "output_node": true,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "RandomNoise": {
+    "input": {
+      "required": {
+        "noise_seed": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "noise_seed"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "NOISE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "NOISE"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "RandomNoise",
+    "display_name": null,
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/noise",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "H3TrimAndSaveVideoWithMCtx": {
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT",
+          {
+            "tooltip": "The sampler's RAW output latent for this take (the same one you decode). Stored whole in the sidecar; the pinned head/tail stay in it and are mapped out via the header."
+          }
+        ],
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "The decode output, UNTRIMMED -- this node removes the pinned scaffolding itself using the pins wire."
+          }
+        ],
+        "base_folder": [
+          "STRING",
+          {
+            "default": "project1",
+            "tooltip": "Output-relative folder to save into. Same meaning as the Timeline's base_folder, so one value can drive both. Empty = the output root."
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "clip",
+            "tooltip": "Filename prefix within base_folder, like core save nodes. Numbering is appended automatically."
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "default": 19,
+            "min": 0,
+            "max": 51,
+            "tooltip": "H.264 quality (lower = better, bigger). THE one that matters: assembly stream-copies these frames and matches this crf for the few it re-encodes, so the take's own setting is what the delivered cut looks like. The MP4 is the delivery copy; the sidecar keeps the lossless latents regardless."
+          }
+        ],
+        "save_conditioning": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Write the wired conditioning beside the clip. It is a real amount of disk -- comparable to the latents, and dominated by the reference images' share of the prompt -- so turn this off for throwaway takes and leave it on for anything you may want to upscale later. Off costs nothing now and cannot be recovered afterwards: the conditioning only exists while the graph that built it is still wired up. Does nothing when the conditioning input is unconnected."
+          }
+        ]
+      },
+      "optional": {
+        "audio": [
+          "AUDIO",
+          {
+            "tooltip": "The decoded audio, untrimmed. Trimmed here in lock step with the frames and tail-matched to exactly frames/fps."
+          }
+        ],
+        "pins": [
+          "OBVPM_H3_PINS",
+          {
+            "tooltip": "The resolved pins from H3MCtxApplyPins. Carries the authoritative generation recipe for the sidecar and derives the lineage edge. Unconnected = root clip."
+          }
+        ],
+        "metadata": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Optional provenance as JSON, stored verbatim in the sidecar header (user_meta). Well-known keys browser UI looks for: prompt, seed, steps, refs_note (nothing can fingerprint reference images automatically -- a refs_note is the mitigation). Any other keys are yours. Empty is fine; invalid JSON is refused."
+          }
+        ],
+        "conditioning": [
+          "CONDITIONING",
+          {
+            "tooltip": "Optional: the CONDITIONING this take was sampled with, stored beside the clip as .cond.safetensors. An upscale/refine pass has to sample the same clip again at a larger size, and it needs the same conditioning to do it -- text, reference images and audio, and any refmods applied on top. Rebuilding that from the prompt graph would mean re-running everything that made it, which can silently differ. Unwired = the take saves normally and simply cannot be refined later."
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": "PROMPT",
+        "extra_pnginfo": "EXTRA_PNGINFO"
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "images",
+        "base_folder",
+        "filename_prefix",
+        "crf",
+        "save_conditioning"
+      ],
+      "optional": [
+        "audio",
+        "pins",
+        "metadata",
+        "conditioning"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING",
+      "IMAGE",
+      "AUDIO"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "path",
+      "images",
+      "audio"
+    ],
+    "name": "H3TrimAndSaveVideoWithMCtx",
+    "display_name": "H3 MCtx Trim and Save Video (obvpm)",
+    "description": "Trims the pinned scaffolding off a decoded H3 take and saves the clip pair (MP4 + mctx sidecar) in one step. Wire the RAW decode output (untrimmed images/audio), the sampler's raw latent, and the pins wire that fed Apply. For a root clip (no pins), it saves as-is.",
+    "python_module": "custom_nodes.comfyui-obvpm-timeline",
+    "category": "obvpm/h3",
+    "output_node": true,
+    "has_intermediate_output": false,
+    "output_tooltips": [
+      "Path of the written MP4; the sidecar sits next to it.",
+      "The delivered (trimmed) frames, for preview.",
+      "The delivered (trimmed) audio, for preview."
+    ],
+    "search_aliases": []
+  },
+  "UNETLoader": {
+    "input": {
+      "required": {
+        "unet_name": [
+          [
+            "minimax_h3_ref2va_pruned_nvfp4.safetensors"
+          ]
+        ],
+        "weight_dtype": [
+          [
+            "default",
+            "fp8_e4m3fn",
+            "fp8_e4m3fn_fast",
+            "fp8_e5m2"
+          ],
+          {
+            "advanced": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "unet_name",
+        "weight_dtype"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "name": "UNETLoader",
+    "display_name": "Load Diffusion Model",
+    "description": "",
+    "python_module": "nodes",
+    "category": "model/loaders",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "MiniMaxH3SigmaShift": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "shift_video": [
+          "FLOAT",
+          {
+            "default": 12.0,
+            "min": 0.01,
+            "max": 100.0,
+            "step": 0.01
+          }
+        ],
+        "shift_audio": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "min": 0.01,
+            "max": 100.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "shift_video",
+        "shift_audio"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "MiniMaxH3SigmaShift",
+    "display_name": "ModelSamplingMiniMaxH3",
+    "description": "Set the video/audio flow shifts.",
+    "python_module": "comfy_extras.nodes_minimax_h3",
+    "category": "model/patch/minimax",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "sigma shift",
+      "minimax shift"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "VAEDecode": {
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT",
+          {
+            "tooltip": "The latent to be decoded."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE model used for decoding the latent."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "vae"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "name": "VAEDecode",
+    "display_name": "VAE Decode",
+    "description": "Decodes latent images back into pixel space images.",
+    "python_module": "nodes",
+    "category": "model/latent",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "output_tooltips": [
+      "The decoded image."
+    ],
+    "search_aliases": [
+      "decode",
+      "decode latent",
+      "latent to image",
+      "render latent"
+    ]
+  },
+  "MiniMaxH3AddGuide": {
+    "input": {
+      "required": {
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "latent": [
+          "LATENT",
+          {}
+        ],
+        "frame_idx": [
+          "INT",
+          {
+            "tooltip": "Frame index to anchor the image or the clip's first frame at. Negative values are counted from the end of the video.",
+            "default": 0,
+            "min": -9999,
+            "max": 9999
+          }
+        ]
+      },
+      "optional": {
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE, needed when an image is connected."
+          }
+        ],
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "Audio VAE, needed when an audio is connected."
+          }
+        ],
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "Image or video frames to anchor. Multi-frame batches are anchored as a clip and cropped down to the model's valid clip lengths: 5, 22, 39... (17k + 5) frames. Batches shorter than 5 frames use only the first image."
+          }
+        ],
+        "audio": [
+          "AUDIO",
+          {
+            "tooltip": "Soundtrack to anchor starting at the same frame index, cropped to the video's remaining duration."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "positive",
+        "latent",
+        "frame_idx"
+      ],
+      "optional": [
+        "vae",
+        "audio_vae",
+        "image",
+        "audio"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "positive"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "MiniMaxH3AddGuide",
+    "display_name": "Add Guide for MiniMax H3",
+    "description": "Anchor an image, a short clip, audio, or a clip with its soundtrack at any frame of a MiniMax H3 video. Chain several nodes to anchor several frames.",
+    "python_module": "comfy_extras.nodes_minimax_h3",
+    "category": "model/conditioning/minimax",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "H3VramHeadroom": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "enabled": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Off passes the model through untouched."
+          }
+        ],
+        "headroom_gb": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "min": 0.0,
+            "max": 24.0,
+            "step": 0.5,
+            "tooltip": "VRAM to keep free while sampling, for the desktop and whatever else is open. About what the other programs hold: 1 on a bare desktop, 3 with a browser open, 5 or 6 while recording. Too high only costs speed (more weights stream from RAM); too low is the stall this node exists for."
+          }
+        ],
+        "count_guides": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Add room for the run's keyframe rows and references on top, from their actual sizes. Core sizes the target latent only."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "enabled",
+        "headroom_gb",
+        "count_guides"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "model"
+    ],
+    "name": "H3VramHeadroom",
+    "display_name": "H3 VRAM Headroom (obvpm)",
+    "description": "Keeps some VRAM free while this H3 model samples, so a run beside a browser, a recorder or a video player streams a few more weights from RAM instead of spilling into system memory -- which shows as minutes stuck at \"Model Initializing\" with the GPU busy and drawing little power. Adds room for the keyframe rows and references of the run, which core's own estimate leaves out (prepends and bridges carry the most). Put it anywhere on the model path before the sampler. Off is a true pass-through.",
+    "python_module": "custom_nodes.comfyui-obvpm-timeline",
+    "category": "obvpm/h3",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "VAELoader": {
+    "input": {
+      "required": {
+        "vae_name": [
+          [
+            "minimax_h3_video_vae_int8_convrot.safetensors",
+            "minimax_h3_audio_vae_fp32.safetensors"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "vae_name"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "VAE"
+    ],
+    "name": "VAELoader",
+    "display_name": "Load VAE",
+    "description": "",
+    "python_module": "nodes",
+    "category": "model/loaders",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "BasicScheduler": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "scheduler": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal",
+              "beta57"
+            ]
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 20,
+            "min": 1,
+            "max": 10000
+          }
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "scheduler",
+        "steps",
+        "denoise"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "SIGMAS"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "SIGMAS"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "BasicScheduler",
+    "display_name": null,
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/schedulers",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "H3MCtxApplyPins": {
+    "input": {
+      "required": {
+        "conditioning": [
+          "CONDITIONING"
+        ],
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "The TARGET clip's empty AV latent -- authoritative for frame count and resolution. Wire the same latent to the sampler."
+          }
+        ],
+        "snap_window_down_to_available": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "When a source cannot supply the requested window, snap down the ladder (56/39/22/5) instead of refusing. Off = refuse loudly; snapping silently weakens continuity."
+          }
+        ],
+        "freeze_audio": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Re-render PICTURE ONLY: hold the whole audio mask at 0 so the soundtrack comes out exactly as it went in. For an upscale/refine pass, where the sound is already finished -- the sampler denoises the nested AV pair together, so without this a refine re-renders audio nobody asked it to touch. Works with no pins at all, which is what the first clip of a timeline needs."
+          }
+        ]
+      },
+      "optional": {
+        "video_vae": [
+          "VAE",
+          {
+            "tooltip": "Video VAE. Needed ONLY for pins from clips with no usable mctx sidecar, which have to be encoded from their pixels (the Timeline emits those for imported footage). Pins from a sidecar never touch a VAE."
+          }
+        ],
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "Audio VAE, for the same pixel-encoded pins as video_vae -- required alongside it even when the footage is silent."
+          }
+        ],
+        "pin_specs": [
+          "OBVPM_H3_PINSPECS",
+          {
+            "tooltip": "The spec stack from H3MCtxPinSpec or a loader's create_pins output. Unconnected or empty = pass-through: the conditioning is returned untouched and pins is empty (a plain root generation), so the node can stay in the graph when not pinning."
+          }
+        ],
+        "masked_audio_feather": [
+          "INT",
+          {
+            "default": 8,
+            "min": 0,
+            "max": 256,
+            "tooltip": "Masked pins only: half-cosine release of the preserved audio across its final ticks toward the generated region (8 = 0.2 s). 0 = hard mask edge."
+          }
+        ],
+        "audio_denoise": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "tooltip": "With freeze_audio: hold the audio mask at this value instead of 0, so the sound re-samples alongside the picture. A refine at high sigma needs ~0.5 here for the model to re-derive LIP SYNC (frozen audio gives a near-noise video nothing to move the mouth for). The resampled audio must then be DISCARDED at save time: wire the save node's audio from a decode of the SOURCE audio latent. Junction-pinned windows stay frozen regardless. 0 = today's exact freeze."
+          }
+        ]
+      },
+      "hidden": {
+        "dynprompt": "DYNPROMPT",
+        "unique_id": "UNIQUE_ID"
+      }
+    },
+    "input_order": {
+      "required": [
+        "conditioning",
+        "latent",
+        "snap_window_down_to_available",
+        "freeze_audio"
+      ],
+      "optional": [
+        "video_vae",
+        "audio_vae",
+        "pin_specs",
+        "masked_audio_feather",
+        "audio_denoise"
+      ],
+      "hidden": [
+        "dynprompt",
+        "unique_id"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "LATENT",
+      "OBVPM_H3_PINS"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "conditioning",
+      "latent",
+      "pins"
+    ],
+    "name": "H3MCtxApplyPins",
+    "display_name": "H3 MCtx Apply Pins (obvpm)",
+    "description": "Slices the pinned windows out of the sources (the sole frame/latent math site: window snapping, phase checks, cumulative-total audio cut) and attaches each pinned run to the conditioning as native H3 keyframe anchors. The pins output carries the resolved slices -- feed it to Trim/Save so they read what was actually pinned.",
+    "python_module": "custom_nodes.comfyui-obvpm-timeline",
+    "category": "obvpm/h3",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "output_tooltips": [
+      "Conditioning with the pinned runs attached. Feed the guider/sampler.",
+      "The target latent. ALWAYS wire the sampler from here, not from the empty-latent node: masked pins write their preserved windows and denoise mask into it (guide-only runs pass it through untouched).",
+      "The resolved pins. Feed H3TrimPinned / the Save nodes."
+    ],
+    "search_aliases": []
+  },
+  "VAEDecodeAudio": {
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "vae"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "AUDIO"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "AUDIO"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "VAEDecodeAudio",
+    "display_name": "VAE Decode Audio",
+    "description": "",
+    "python_module": "comfy_extras.nodes_audio",
+    "category": "model/latent",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "latent to audio"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "SamplerCustomAdvanced": {
+    "input": {
+      "required": {
+        "noise": [
+          "NOISE",
+          {}
+        ],
+        "guider": [
+          "GUIDER",
+          {}
+        ],
+        "sampler": [
+          "SAMPLER",
+          {}
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {}
+        ],
+        "latent_image": [
+          "LATENT",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "noise",
+        "guider",
+        "sampler",
+        "sigmas",
+        "latent_image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "output",
+      "denoised_output"
+    ],
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "SamplerCustomAdvanced",
+    "display_name": null,
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/custom",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "KSamplerSelect": {
+    "input": {
+      "required": {
+        "sampler_name": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "cfgpp_ud10_ab",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sampler_name"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "SAMPLER"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "SAMPLER"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "KSamplerSelect",
+    "display_name": null,
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/samplers",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "CacheBackendData //Inspire": {
+    "input": {
+      "required": {
+        "key": [
+          "STRING",
+          {
+            "multiline": false,
+            "placeholder": "Input data key (e.g. 'model a', 'chunli lora', 'girl latent 3', ...)"
+          }
+        ],
+        "tag": [
+          "STRING",
+          {
+            "multiline": false,
+            "placeholder": "Tag: short description"
+          }
+        ],
+        "data": [
+          "*"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "key",
+        "tag",
+        "data"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "*"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "data opt"
+    ],
+    "name": "CacheBackendData //Inspire",
+    "display_name": "Cache Backend Data (Inspire)",
+    "description": "",
+    "python_module": "custom_nodes.comfyui-inspire-pack",
+    "category": "InspirePack/Backend",
+    "output_node": true,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "RetrieveBackendData //Inspire": {
+    "input": {
+      "required": {
+        "key": [
+          "STRING",
+          {
+            "multiline": false,
+            "placeholder": "Input data key (e.g. 'model a', 'chunli lora', 'girl latent 3', ...)"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "key"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "*"
+    ],
+    "output_is_list": [
+      true
+    ],
+    "output_name": [
+      "data"
+    ],
+    "name": "RetrieveBackendData //Inspire",
+    "display_name": "Retrieve Backend Data (Inspire)",
+    "description": "",
+    "python_module": "custom_nodes.comfyui-inspire-pack",
+    "category": "InspirePack/Backend",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  },
+  "RemoveBackendData //Inspire": {
+    "input": {
+      "required": {
+        "key": [
+          "STRING",
+          {
+            "multiline": false,
+            "placeholder": "Input data key ('*' = clear all)"
+          }
+        ]
+      },
+      "optional": {
+        "signal_opt": [
+          "*"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "key"
+      ],
+      "optional": [
+        "signal_opt"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "*"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "signal"
+    ],
+    "name": "RemoveBackendData //Inspire",
+    "display_name": "Remove Backend Data (Inspire)",
+    "description": "",
+    "python_module": "custom_nodes.comfyui-inspire-pack",
+    "category": "InspirePack/Backend",
+    "output_node": true,
+    "has_intermediate_output": false,
+    "search_aliases": []
+  }
+}

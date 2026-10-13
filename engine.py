@@ -800,174 +800,206 @@ class Runner:
         self.state['encoding'] = self.state['sampling'] = None
         self.save()
 
-    def run(self):
+    def _prepare_run(self):
         s, c = self.state, self.state["settings"]
+        c = normalize_settings(c)
+        if s.get('safety_hold'):
+            raise SafetyError(s['safety_hold'])
+        validate_profile(c, s['slots'])
+        # Upgrade resource settings without changing an existing take's shape.
+        c = safe_new_settings(c)
+        s["settings"] = c
+        s["slots"] = with_speech_guidance(s["slots"], c)
+        if s.get('pending') and s.get('status') == 'safety_stopped':
+            s['pending']['retry_after_guard'] = True
+        s.pop("error", None)
+        s["diagnostics_version"] = 1
+        self.log("Projekt gestartet / fortgesetzt.")
+        self.guard = MemoryGuard(c, self.directory, self.call, self.log, self.pause_point)
+        if s.get('requested_resolution') != [c['width'], c['height']]:
+            self.log(f"Speicherprofil: {c['width']} × {c['height']} Pixel, höchstens 141 Rohframes je Take.")
+        self.guard.measure('initial')
+        self.log("Prüfe Nodes, Modelle und Referenzen …")
+        preflight(c, self.call)
+        s.setdefault("folder", c["output_prefix"] + "/" + s["id"])
+        self.save()
+
+    def _ensure_plan(self):
+        s, c = self.state, self.state["settings"]
+        if not s["plan"]:
+            self.pause_point()
+            ensure_idle(c, self.call)
+            s["status"] = "planning"
+            self.save()
+            with self.guard.observe('ollama_running'):
+                s["plan"] = create_plan(c, s["master_prompt"], s["slots"], self.log, self.call,
+                                        attempt_dir=self.directory / "ollama",
+                                        before_attempt=lambda: self.guard.prepare('before_ollama'))
+            self.save()
+            atomic_json(self.directory / "plan.json", s["plan"])
+            self.log("Plan geprüft; Ollama entlädt das Planungsmodell (keep_alive=0).")
+        self._wait_for_planner_unload()
+        if (s.get("review_prompts") and not s.get("prompt_review_confirmed")
+                and not s.get("prompt_review_pending")):
+            self.prepare_prompt_review()
+        if s.get("prompt_review_pending"):
+            raise Paused("Ollama hat die Prompts erstellt. Bitte prüfen und danach im Projekt fortsetzen.")
+
+    def _wait_for_planner_unload(self):
+        c = self.state["settings"]
+        for _ in range(30):
+            loaded = self.call(c["ollama_url"], "/api/ps").get("models", [])
+            if not any(m.get("name") == c["ollama_model"] or m.get("model") == c["ollama_model"] for m in loaded):
+                break
+            self.pause_point()
+            time.sleep(2)
+        else:
+            raise JobError("Ollama hat das Planungsmodell noch nicht entladen. Speicher vor Fortsetzung prüfen.")
+
+    def _resume_pending(self):
+        s = self.state
+        self.finish_current_take = bool(s.get('pending') or s.get('encoding') or s.get('sampling'))
+        if s["pending"]:
+            self.log("Prüfe bereits gestarteten Auftrag …")
+            count_before = len(s['takes'])
+            self.wait_for_take()
+            if len(s['takes']) > count_before:
+                self.release_encoding()
+                self.finish_current_take = False
+
+    def _select_take_cache(self, index):
+        s, c = self.state, self.state["settings"]
+        encoded = s.get('encoding')
+        sampled = s.get('sampling')
+        if sampled and (sampled['take_index'] != index or not cache_present(self.call, c['comfy_url'], sampled['cache_token'], 'sampling')):
+            self.release_encoding()
+            encoded = sampled = None
+        if not sampled and encoded and (encoded['take_index'] != index or not cache_present(self.call, c['comfy_url'], encoded['cache_token'])):
+            self.release_encoding()
+            encoded = None
+        ready = sampled or encoded
+        token = ready['cache_token'] if ready else secrets.token_hex(16)
+        return token, bool(ready), bool(sampled)
+
+    def _generate_take(self, index):
+        s, c = self.state, self.state["settings"]
+        slot = s["slots"][index]
+        text = self.prompt_for_take(index)
+        prev = s["takes"][-1]["clip"] if s["takes"] else None
+        graph = build_graph(c, text, slot, s["folder"], (s["seed"] + index) % 2**63, prev)
+        objects = self.call(c["comfy_url"], "/object_info")
+        validate_lora_selection(c, objects)
+        validate_graph(graph, objects)
+        token, ready, sampled = self._select_take_cache(index)
+        encode, sample, decode = split_graph(graph, token)
+        validate_graph(encode, objects)
+        validate_graph(sample, objects)
+        validate_graph(decode, objects)
+        atomic_json(self.directory / f"take_{index+1:02d}_encode_api.json", encode)
+        atomic_json(self.directory / f"take_{index+1:02d}_api.json", sample)
+        atomic_json(self.directory / f"take_{index+1:02d}_decode_api.json", decode)
+        if not ready:
+            self.guard.prepare('before_encoding')
+            self.log(f"Take {index+1}/{len(s['slots'])}: Prompt und Referenzbild vorbereiten …")
+            self.submit_graph(encode, index, 'encoding', token)
+            if not s.get('encoding'):
+                raise JobError('Prompt-Zwischenspeicher nach Vorbereitung nicht verfügbar. Bitte erneut fortsetzen.')
+        # This is an actual execution-cache reset, not just GPU offload.
+        if not sampled:
+            self.guard.prepare('before_take')
+            if not cache_present(self.call, c['comfy_url'], token):
+                raise JobError('Prompt-Zwischenspeicher nach Freigabe verloren. Kein Videoauftrag gestartet; bitte fortsetzen.')
+            self.log(f"Take {index+1}/{len(s['slots'])}: {slot['start_seconds']:.2f}–{slot['end_seconds']:.2f} s berechnen …")
+            self.submit_graph(sample, index, 'sampling', token)
+            if not s.get('sampling'):
+                raise JobError('Video-Zwischenspeicher nach Berechnung fehlt; bitte fortsetzen.')
+        self.guard.prepare('before_decoding')
+        if not cache_present(self.call, c['comfy_url'], token, 'sampling'):
+            raise JobError('Video-Zwischenspeicher nach Freigabe verloren. Bitte fortsetzen.')
+        self.log(f'Take {index+1}: Bilder und Ton ausgeben …')
+        self.submit_graph(decode, index, 'decoding', token)
+        self.release_encoding()
+        self.finish_current_take = False
+
+    def _export_timeline(self):
+        s, c = self.state, self.state["settings"]
+        self.pause_point()
+        self.release_encoding()
+        self.guard.prepare('before_export')
+        sequence = "\n".join(t["clip"] for t in s["takes"])
+        args = {"sequence": sequence, "base_folder": s["folder"], "preview_filename": "assembled",
+                "export_filename_prefix": "final", "crf": c["crf"], "level_lock": True,
+                "level_lock_frames": 12, "level_lock_flicker": True, "level_lock_local": True,
+                "crossfade": True, "crossfade_frames": 0, "audio_declick": False}
+        probe = self.call(c["comfy_url"], "/obvpm/h3/preview_cut", {**args, "probe": True}, timeout=180)
+        target = c["seconds"] * FPS
+        expected = sum(t["frames"] for t in s["takes"])
+        if probe["total"] != expected or probe["total"] < target:
+            raise JobError("Timeline-Nutzlänge weicht ab; Export zur Kontrolle gestoppt.")
+        excess = probe["total"] - target
+        if excess:
+            keep = s["takes"][-1]["frames"] - excess
+            if keep <= 0:
+                raise JobError("Letzter Take wäre vollständig abgeschnitten.")
+            sequence += f" @ ..{keep}"
+        args["sequence"] = sequence
+        probe = self.call(c["comfy_url"], "/obvpm/h3/preview_cut", {**args, "probe": True}, timeout=180)
+        if probe["total"] != target:
+            raise JobError("Getrimmte Timeline hat nicht die Zieldauer.")
+        s["sequence"] = sequence
+        s["status"] = "exporting"
+        self.save()
+        (self.directory / "timeline.txt").write_text(sequence, encoding="utf-8")
+        self.save_editor(sequence)
+        self.log(f"Exportiere {c['seconds']} Sekunden mit Ton …")
+        with self.guard.observe('export_running'):
+            exported = self.call(c["comfy_url"], "/obvpm/h3/export", args, timeout=1800)
+        s["final_path"] = relative_path(exported["path"])
+        s["final_url"] = view_url(c, s["final_path"])
+        s["status"] = "complete"
+        self.save()
+        self.log("Fertig: " + s["final_path"])
+        return s["final_path"]
+
+    def _handle_run_error(self, error):
+        s = self.state
+        if isinstance(error, SafetyError):
+            s['status'] = 'safety_stopped'
+            if hasattr(self, 'guard'):
+                self.guard.record('safety_stop', error=str(error))
+            if hasattr(self, 'guard') and s.get('pending'):
+                s['pending']['retry_after_guard'] = True
+                self.guard.interrupt(s['pending'].get('prompt_id'))
+        else:
+            s["status"] = "error"
+            # A lost connection must not leave an unmonitored known take
+            # running silently. Keep pending even when interruption is sent.
+            if hasattr(self, 'guard') and s.get('pending'):
+                self.guard.interrupt(s['pending'].get('prompt_id'))
+        s["error"] = str(error)
+        self.save()
+        self.log("Fehler: " + str(error))
+
+    def run(self):
+        s = self.state
         if s["final_path"]:
             return s["final_path"]
         try:
-            c = normalize_settings(c)
-            if s.get('safety_hold'):
-                raise SafetyError(s['safety_hold'])
-            validate_profile(c, s['slots'])
-            # Upgrade resource settings without changing an existing take's shape.
-            c = safe_new_settings(c)
-            s["settings"] = c
-            s["slots"] = with_speech_guidance(s["slots"], c)
-            if s.get('pending') and s.get('status') == 'safety_stopped':
-                s['pending']['retry_after_guard'] = True
-            s.pop("error", None)
-            s["diagnostics_version"] = 1
-            self.log("Projekt gestartet / fortgesetzt.")
-            self.guard = MemoryGuard(c, self.directory, self.call, self.log, self.pause_point)
-            if s.get('requested_resolution') != [c['width'], c['height']]:
-                self.log(f"Speicherprofil: {c['width']} × {c['height']} Pixel, höchstens 141 Rohframes je Take.")
-            self.guard.measure('initial')
-            self.log("Prüfe Nodes, Modelle und Referenzen …")
-            preflight(c, self.call)
-            s.setdefault("folder", c["output_prefix"] + "/" + s["id"])
-            self.save()
-            if not s["plan"]:
-                self.pause_point()
-                ensure_idle(c, self.call)
-                s["status"] = "planning"
-                self.save()
-                with self.guard.observe('ollama_running'):
-                    s["plan"] = create_plan(c, s["master_prompt"], s["slots"], self.log, self.call,
-                                            attempt_dir=self.directory / "ollama",
-                                            before_attempt=lambda: self.guard.prepare('before_ollama'))
-                self.save()
-                atomic_json(self.directory / "plan.json", s["plan"])
-                self.log("Plan geprüft; Ollama entlädt das Planungsmodell (keep_alive=0).")
-            for _ in range(30):
-                loaded = self.call(c["ollama_url"], "/api/ps").get("models", [])
-                if not any(m.get("name") == c["ollama_model"] or m.get("model") == c["ollama_model"] for m in loaded):
-                    break
-                self.pause_point()
-                time.sleep(2)
-            else:
-                raise JobError("Ollama hat das Planungsmodell noch nicht entladen. Speicher vor Fortsetzung prüfen.")
-            if (s.get("review_prompts") and not s.get("prompt_review_confirmed")
-                    and not s.get("prompt_review_pending")):
-                self.prepare_prompt_review()
-            if s.get("prompt_review_pending"):
-                raise Paused("Ollama hat die Prompts erstellt. Bitte prüfen und danach im Projekt fortsetzen.")
-            self.finish_current_take = bool(s.get('pending') or s.get('encoding') or s.get('sampling'))
-            if s["pending"]:
-                self.log("Prüfe bereits gestarteten Auftrag …")
-                count_before = len(s['takes'])
-                self.wait_for_take()
-                if len(s['takes']) > count_before:
-                    self.release_encoding()
-                    self.finish_current_take = False
+            self._prepare_run()
+            self._ensure_plan()
+            self._resume_pending()
             while len(s["takes"]) < len(s["slots"]):
                 self.pause_point()
                 self.finish_current_take = True
-                i = len(s["takes"])
-                slot = s["slots"][i]
-                text = self.prompt_for_take(i)
-                prev = s["takes"][-1]["clip"] if s["takes"] else None
-                graph = build_graph(c, text, slot, s["folder"], (s["seed"] + i) % 2**63, prev)
-                objects = self.call(c["comfy_url"], "/object_info")
-                validate_lora_selection(c, objects)
-                validate_graph(graph, objects)
-                encoded = s.get('encoding')
-                sampled = s.get('sampling')
-                if sampled and (sampled['take_index'] != i or not cache_present(self.call, c['comfy_url'], sampled['cache_token'], 'sampling')):
-                    self.release_encoding()
-                    encoded = sampled = None
-                if not sampled and encoded and (encoded['take_index'] != i or not cache_present(self.call, c['comfy_url'], encoded['cache_token'])):
-                    self.release_encoding()
-                    encoded = None
-                ready = sampled or encoded
-                token = ready['cache_token'] if ready else secrets.token_hex(16)
-                encode, sample, decode = split_graph(graph, token)
-                validate_graph(encode, objects)
-                validate_graph(sample, objects)
-                validate_graph(decode, objects)
-                atomic_json(self.directory / f"take_{i+1:02d}_encode_api.json", encode)
-                atomic_json(self.directory / f"take_{i+1:02d}_api.json", sample)
-                atomic_json(self.directory / f"take_{i+1:02d}_decode_api.json", decode)
-                if not ready:
-                    self.guard.prepare('before_encoding')
-                    self.log(f"Take {i+1}/{len(s['slots'])}: Prompt und Referenzbild vorbereiten …")
-                    self.submit_graph(encode, i, 'encoding', token)
-                    if not s.get('encoding'):
-                        raise JobError('Prompt-Zwischenspeicher nach Vorbereitung nicht verfügbar. Bitte erneut fortsetzen.')
-                # This is an actual execution-cache reset, not just GPU offload.
-                if not sampled:
-                    self.guard.prepare('before_take')
-                    if not cache_present(self.call, c['comfy_url'], token):
-                        raise JobError('Prompt-Zwischenspeicher nach Freigabe verloren. Kein Videoauftrag gestartet; bitte fortsetzen.')
-                    self.log(f"Take {i+1}/{len(s['slots'])}: {slot['start_seconds']:.2f}–{slot['end_seconds']:.2f} s berechnen …")
-                    self.submit_graph(sample, i, 'sampling', token)
-                    if not s.get('sampling'):
-                        raise JobError('Video-Zwischenspeicher nach Berechnung fehlt; bitte fortsetzen.')
-                self.guard.prepare('before_decoding')
-                if not cache_present(self.call, c['comfy_url'], token, 'sampling'):
-                    raise JobError('Video-Zwischenspeicher nach Freigabe verloren. Bitte fortsetzen.')
-                self.log(f'Take {i+1}: Bilder und Ton ausgeben …')
-                self.submit_graph(decode, i, 'decoding', token)
-                self.release_encoding()
-                self.finish_current_take = False
-            self.pause_point()
-            self.release_encoding()
-            self.guard.prepare('before_export')
-            sequence = "\n".join(t["clip"] for t in s["takes"])
-            args = {"sequence": sequence, "base_folder": s["folder"], "preview_filename": "assembled",
-                    "export_filename_prefix": "final", "crf": c["crf"], "level_lock": True,
-                    "level_lock_frames": 12, "level_lock_flicker": True, "level_lock_local": True,
-                    "crossfade": True, "crossfade_frames": 0, "audio_declick": False}
-            probe = self.call(c["comfy_url"], "/obvpm/h3/preview_cut", {**args, "probe": True}, timeout=180)
-            target = c["seconds"] * FPS
-            expected = sum(t["frames"] for t in s["takes"])
-            if probe["total"] != expected or probe["total"] < target:
-                raise JobError("Timeline-Nutzlänge weicht ab; Export zur Kontrolle gestoppt.")
-            excess = probe["total"] - target
-            if excess:
-                keep = s["takes"][-1]["frames"] - excess
-                if keep <= 0:
-                    raise JobError("Letzter Take wäre vollständig abgeschnitten.")
-                sequence += f" @ ..{keep}"
-            args["sequence"] = sequence
-            probe = self.call(c["comfy_url"], "/obvpm/h3/preview_cut", {**args, "probe": True}, timeout=180)
-            if probe["total"] != target:
-                raise JobError("Getrimmte Timeline hat nicht die Zieldauer.")
-            s["sequence"] = sequence
-            s["status"] = "exporting"
-            self.save()
-            (self.directory / "timeline.txt").write_text(sequence, encoding="utf-8")
-            self.save_editor(sequence)
-            self.log(f"Exportiere {c['seconds']} Sekunden mit Ton …")
-            with self.guard.observe('export_running'):
-                exported = self.call(c["comfy_url"], "/obvpm/h3/export", args, timeout=1800)
-            s["final_path"] = relative_path(exported["path"])
-            s["final_url"] = view_url(c, s["final_path"])
-            s["status"] = "complete"
-            self.save()
-            self.log("Fertig: " + s["final_path"])
-            return s["final_path"]
+                self._generate_take(len(s["takes"]))
+            return self._export_timeline()
         except Paused as e:
             s["status"] = "paused"
             self.save()
             self.log(str(e))
             raise
         except Exception as e:
-            if isinstance(e, SafetyError):
-                s['status'] = 'safety_stopped'
-                if hasattr(self, 'guard'):
-                    self.guard.record('safety_stop', error=str(e))
-                if hasattr(self, 'guard') and s.get('pending'):
-                    s['pending']['retry_after_guard'] = True
-                    self.guard.interrupt(s['pending'].get('prompt_id'))
-            else:
-                s["status"] = "error"
-                # A lost connection must not leave an unmonitored known take
-                # running silently. Keep pending even when interruption is sent.
-                if hasattr(self, 'guard') and s.get('pending'):
-                    self.guard.interrupt(s['pending'].get('prompt_id'))
-            s["error"] = str(e)
-            self.save()
-            self.log("Fehler: " + str(e))
+            self._handle_run_error(e)
             raise
 
     def save_editor(self, sequence):

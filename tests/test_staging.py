@@ -173,6 +173,66 @@ class StagingTests(unittest.TestCase):
         self.assertEqual(len(self.fake.prompts),7)
         self.assertFalse(self.fake.cache)
 
+    def test_resume_selects_stage_cache_for_current_take(self):
+        cases = (
+            ('encoding_wrong_index', 'encoding', (1, 0, 0), (8, 7, 7)),
+            ('sampling_wrong_index', 'sampling', (1, 1, 0), (8, 8, 7)),
+            ('sampling_over_encoding', 'sampling', (1, 1, 0), (7, 7, 7)),
+        )
+        for name, checkpoint, before_counts, totals in cases:
+            with self.subTest(case=name):
+                fake = FakeServices()
+                failed = False
+
+                def call(base, route, data=None, timeout=30):
+                    nonlocal failed
+                    at_checkpoint = (fake.encodings and not fake.prompts if checkpoint == 'encoding'
+                                     else fake.prompts and not fake.decodings)
+                    if route == '/free' and at_checkpoint and not failed:
+                        failed = True
+                        fake.calls.append((route, copy.deepcopy(data)))
+                        raise e.JobError('connection lost before next stage')
+                    return fake(base, route, data, timeout)
+
+                directory = Path(self.temp.name) / name
+                runner = e.Runner(directory, lambda _: None, call=call, poll_seconds=0)
+                runner.new({'image': 'test.png', 'seconds': 30}, 'Quiet scene')
+                with self.assertRaises(e.JobError):
+                    runner.run()
+                self.assertTrue(failed)
+                self.assertIsNone(runner.state['pending'])
+                self.assertEqual(runner.state['takes'], [])
+                stages = (fake.encodings, fake.prompts, fake.decodings)
+                counts = tuple(len(stage) for stage in stages)
+                self.assertEqual(counts, before_counts)
+                if name == 'encoding_wrong_index':
+                    runner.state['encoding']['take_index'] = 1
+                elif name == 'sampling_wrong_index':
+                    runner.state['sampling']['take_index'] = 1
+                    self.assertEqual(runner.state['encoding']['take_index'], 0)
+                else:
+                    runner.state['encoding']['take_index'] = 1
+                    token = runner.state['sampling']['cache_token']
+                    for key in cache_keys(token):
+                        fake.cache.pop(key)
+                runner.save()
+                calls_before = len(fake.calls)
+                resumed = e.Runner(directory, lambda _: None, call=fake, poll_seconds=0)
+                resumed.run()
+                self.assertEqual(tuple(len(stage) for stage in stages), totals)
+                self.assertEqual(tuple(len(stage) - count for stage, count in zip(stages, counts)),
+                                 tuple(total - count for total, count in zip(totals, before_counts)))
+                if name == 'sampling_over_encoding':
+                    first = next(data['prompt'] for route, data in fake.calls[calls_before:]
+                                 if route == '/prompt')
+                    self.assertEqual(first['96']['inputs']['key'], cache_keys(token, 'sampling')[0])
+                self.assertEqual(resumed.state['status'], 'complete')
+                self.assertEqual(len(resumed.state['takes']), 7)
+                self.assertEqual(len({take['clip'] for take in resumed.state['takes']}), 7)
+                self.assertIsNone(resumed.state['pending'])
+                self.assertFalse(fake.cache)
+                self.assertEqual(sum(route == '/api/chat' for route, _ in fake.calls), 1)
+
     def test_confirmed_old_guard_interrupt_can_resume_with_saved_plan(self):
         self.r.state.update(plan=sample_plan(7),status='safety_stopped',
                             pending={'request_id':'old','prompt_id':'old-prompt','take_index':0,'submitted_at':time.time()-7200})

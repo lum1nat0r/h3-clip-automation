@@ -95,3 +95,42 @@ Appdaten wurden 0, 1 und 0.5 gespeichert; Reload stellt 0.5 wieder her.
 Settings erzeugte Graph enthält unverändert `strength_model: 0.5`.
 Bestehende Jobwerte bleiben unverändert; Engine und ComfyUI-Corebereich wurden
 nicht eingeschränkt. JavaScript-Syntaxprüfung erfolgreich, keine GPU-Generierung.
+
+## Runner-Lifecycle-Refactoring
+
+Der Ablauf in `engine.py:Runner.run` wurde verhaltensgleich in acht private
+Lifecycle-Methoden derselben Klasse aufgeteilt. `run(self)` bleibt die öffentliche
+API; Job-JSON, Service-Protokolle und Logtexte bleiben unverändert. Vorbereitung,
+Planung und Planner-Unload, Pending-Abgleich, Cache-Auswahl, Take-Generierung,
+Export und Fehlerpersistenz haben getrennte Verantwortlichkeiten. Die drei
+Generierungsphasen behalten ihre unterschiedlichen Resume-Bedingungen.
+
+- Vorher und nachher mit `H3_CONTAINER=0`:
+  `python -B -m unittest discover -s tests -v` führt unter Windows 155 Tests aus,
+  ohne Fehler und mit zwei POSIX-/Linux-Skips. Die bereits in der Baseline
+  sichtbaren `ResourceWarning`s beim HTTPError-Cleanup bleiben bestehen.
+- Drei neue Charakterisierungstests bestehen bereits gegen den ursprünglichen
+  Runner: Cache-Auswahl bei falschem Take-Index und Sampling-Vorrang, Ablehnung
+  ungültiger erster/zweiter Timeline-Probes sowie History-Verbindungsfehler mit
+  erhaltenem Pending und ausschließlich eigener Queue-Delete/Interrupt-ID.
+- Jeder der drei Extraktionsschritte wurde vor dem nächsten Schritt mit gezielten
+  Verhaltenstests geprüft; keine Tests schreiben private Helper-Aufrufe fest.
+- Ein eigenständiger temporärer Smoke führte den echten Runner mit
+  `tests/test_automation.py:FakeServices` und echter Job-/Artefaktpersistenz aus:
+  Prompt-Review, gespeicherte Prompt-Änderung, verlorene Samplingantwort,
+  Wiederaufnahme und Export. Ergebnis: `complete`, sieben eindeutige Takes,
+  720 Timeline-Frames, ein Planungsaufruf, ein Export und keine doppelte Submission.
+  Cache und Pending sind danach leer; erneutes `run()` ruft keinen Service auf.
+- AST-basierte Strukturprüfung: `run` hat 21 nichtleere Nichtkommentarzeilen;
+  die acht neuen Methoden haben jeweils 10–39 und liegen unter der Grenze von 60.
+- `repowise update --working-tree` erfolgreich. Die anschließende
+  `get_health`-Abfrage liefert weiterhin die gespeicherten `run`-Findings
+  `brain_method`, `complex_method` und `nested_complexity` des alten Standes
+  (164 Zeilen, CCN 48, Zeilen 803–971); `recomputed_this_call=false` und
+  `source_bytes_verified=false`. Kein belastbarer Health-Score-Vergleich und
+  keine Aussage, dass diese Findings neu bewertet oder geschlossen wurden.
+  Für neue Health-Daten verlangt Repowise einen Commit; keiner wurde angelegt.
+
+Die Prüfungen verwenden ausschließlich temporäre Projektverzeichnisse und
+Protokoll-Doubles, keine Nutzermodelle oder echten `runs/`. Sie belegen
+Controller-Verhalten, nicht gerenderte Bild-/Tonqualität oder GPU-Speichersicherheit.

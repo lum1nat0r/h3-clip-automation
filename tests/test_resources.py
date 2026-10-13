@@ -181,6 +181,47 @@ class MemoryTests(unittest.TestCase):
                 self.assertNotIn(('/queue',{'clear':True}),self.fake.calls)
                 self.assertIsNone(self.fake.export_args)
 
+    def test_history_connection_failure_preserves_and_interrupts_own_pending(self):
+        error = e.JobError('history connection lost')
+        accepted_pending = None
+
+        def call(base, route, data=None, timeout=30):
+            nonlocal accepted_pending
+            if route in ('/queue', '/interrupt') and data is not None:
+                self.fake.calls.append((route, copy.deepcopy(data)))
+                return {}
+            if route == '/history/p1':
+                self.fake.calls.append((route, copy.deepcopy(data)))
+                accepted_pending = copy.deepcopy(runner.state['pending'])
+                raise error
+            return self.fake(base, route, data, timeout)
+
+        runner = self.runner(call, seconds=30)
+        with self.assertRaises(e.JobError) as caught:
+            runner.run()
+        self.assertIs(caught.exception, error)
+        self.assertNotIsInstance(caught.exception, m.SafetyError)
+        saved = json.loads((runner.directory / 'job.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved['status'], 'error')
+        self.assertEqual(saved['error'], str(error))
+        self.assertEqual(saved['pending'], accepted_pending)
+        self.assertEqual(saved['pending']['prompt_id'], 'p1')
+        self.assertEqual(saved['pending']['phase'], 'sampling')
+        self.assertRegex(saved['pending']['request_id'], r'^[0-9a-f]{32}$')
+        self.assertGreater(saved['pending']['submitted_at'], 0)
+        self.assertNotIn('retry_after_guard', saved['pending'])
+        interruption = [(route, data) for route, data in self.fake.calls
+                        if route in ('/queue', '/interrupt') and data is not None]
+        self.assertEqual(interruption, [('/queue', {'delete': ['p1']}),
+                                        ('/interrupt', {'prompt_id': 'p1'})])
+        records = [json.loads(line) for line in
+                   (runner.directory / 'resources.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertFalse(any(record['phase'] == 'safety_stop' for record in records))
+        self.assertEqual(len(self.fake.encodings), 1)
+        self.assertEqual(len(self.fake.prompts), 1)
+        self.assertEqual(self.fake.decodings, [])
+        self.assertFalse(any(route == '/obvpm/h3/export' for route, _ in self.fake.calls))
+
     def test_full_vram_during_sampling_is_not_alone_an_error(self):
         call=self.stats_call(lambda s:s['devices'][0].update(vram_free=0))
         self.guard(call).running()

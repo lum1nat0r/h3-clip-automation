@@ -263,6 +263,37 @@ class AutomationTests(unittest.TestCase):
                 self.assertEqual(r.run(), final)
                 self.assertEqual(len(fake.prompts), count)
 
+    def test_export_rejects_invalid_timeline_probes(self):
+        for invalid_probe in (1, 2):
+            with self.subTest(probe=invalid_probe), tempfile.TemporaryDirectory() as temp:
+                fake = FakeServices()
+                probes = 0
+
+                def call(base, route, data=None, timeout=30):
+                    nonlocal probes
+                    result = fake(base, route, data, timeout)
+                    if route == '/obvpm/h3/preview_cut':
+                        probes += 1
+                        if probes == invalid_probe:
+                            result['total'] = (sum(t['frames'] for t in runner.state['takes']) - 1
+                                               if invalid_probe == 1
+                                               else runner.state['settings']['seconds'] * e.FPS - 1)
+                    return result
+
+                runner = self.runner(temp, fake)
+                runner.call = call
+                with self.assertRaises(e.JobError):
+                    runner.run()
+                saved = json.loads((runner.directory / 'job.json').read_text(encoding='utf-8'))
+                self.assertEqual(probes, invalid_probe)
+                self.assertEqual(saved['status'], 'error')
+                self.assertIsNone(saved['final_path'])
+                self.assertEqual(saved['takes'], runner.state['takes'])
+                self.assertEqual(len(saved['takes']), 7)
+                self.assertNotIn('sequence', saved)
+                self.assertFalse((runner.directory / 'timeline.txt').exists())
+                self.assertFalse(any(route == '/obvpm/h3/export' for route, _ in fake.calls))
+
     def test_lost_response_recovers_accepted_prompt_without_duplicate(self):
         with tempfile.TemporaryDirectory() as temp:
             fake = FakeServices()

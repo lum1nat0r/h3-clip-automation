@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlencode
 
 sys.path.insert(0, '/opt/h3')
 sys.path.insert(0, '/opt/h3/deploy')
@@ -60,6 +61,13 @@ class AI(BaseHTTPRequestHandler):
         elif self.path == '/object_info':
             self.send(json.dumps({k:{} for k in ('MiniMaxH3ReferenceToVideo','H3VramHeadroom',
                 'CacheBackendData //Inspire','RetrieveBackendData //Inspire')}).encode())
+        elif self.path == '/queue':
+            self.send(b'{"queue_running":[],"queue_pending":[]}')
+        elif self.path == '/object_info/LoraLoaderModelOnly':
+            names = sorted(p.name for p in Path(os.environ['H3_LORA_DIR']).glob('*.safetensors'))
+            self.send(json.dumps({'LoraLoaderModelOnly': {'input': {'required': {
+                'lora_name': [names], 'strength_model': ['FLOAT', {
+                    'default': 1.0, 'min': -100.0, 'max': 100.0, 'step': 0.01}]}}}}).encode())
         else:
             self.send(b'{}')
 
@@ -81,6 +89,21 @@ def main():
     subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', '/tmp/test-ssh'], check=True)
     os.environ['H3_SSH_PUBLIC_KEY'] = Path('/tmp/test-ssh.pub').read_text().strip()
     entrypoint.configure()
+    import yaml
+    lora_directory = root / 'comfy/models/loras'
+    assert lora_directory.is_dir()
+    assert (lora_directory.stat().st_uid, lora_directory.stat().st_gid) == (10001, 10001)
+    assert os.environ['H3_LORA_DIR'] == str(lora_directory)
+    assert os.environ['H3_LORA_COMFY_URL'] == 'http://127.0.0.1:8188'
+    model_paths = yaml.safe_load(Path('/run/h3/models.yaml').read_text())['h3']
+    assert Path(model_paths['base_path']) / model_paths['loras'] == lora_directory
+    installer_env = json.loads(Path('/run/h3/model-env.json').read_text())
+    assert 'H3_LORA_DIR' not in installer_env and 'H3_LORA_COMFY_URL' not in installer_env
+    persisted_lora = lora_directory / 'configuration-smoke.safetensors'
+    subprocess.run([sys.executable, '-c',
+                    'import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b"configuration-smoke")',
+                    str(persisted_lora)], check=True, user=entrypoint.UID, group=entrypoint.GID,
+                   extra_groups=[])
     assert not any('smoke-value-never-persist' in p.read_text(errors='ignore')
                    for p in root.rglob('*.json'))
     certificate = (root/'tls/server.crt').read_bytes()
@@ -94,10 +117,11 @@ def main():
     context = ssl._create_unverified_context()  # Only this freshly generated test certificate.
 
     def fetch(port, path='/', method='GET', data=None, headers=None, authenticate=True):
-        connection = http.client.HTTPSConnection('127.0.0.1', port, context=context, timeout=10)
+        connection = http.client.HTTPSConnection('127.0.0.1', port, context=context, timeout=120)
         hdr = {'Authorization':auth} if authenticate else {}
         hdr.update(headers or {})
-        connection.request(method, path, body=json.dumps(data) if data is not None else None, headers=hdr)
+        body = data if isinstance(data, bytes) else json.dumps(data) if data is not None else None
+        connection.request(method, path, body=body, headers=hdr)
         response = connection.getresponse()
         payload = response.read() if response.status != 101 else b''
         result = response.status, dict(response.getheaders()), payload
@@ -138,6 +162,34 @@ def main():
         assert 'id="shutdown" hidden' in html
         token = re.search("const token='([^']+)'", html)[1]
         headers = {'X-H3-Token':token, 'Content-Type':'application/json'}
+        upload_path = '/api/lora-upload?' + urlencode(
+            {'name': 'large.safetensors', 'comfy_url': 'http://127.0.0.1:8188'})
+        upload_headers = {'X-H3-Token': token, 'Content-Type': 'application/octet-stream'}
+        before = set(lora_directory.iterdir())
+        assert fetch(8080, upload_path, 'POST', b'test', upload_headers, authenticate=False)[0] == 401
+        assert fetch(8080, upload_path, 'POST', b'test',
+                     dict(upload_headers, **{'Sec-Fetch-Site': 'cross-site'}))[0] == 403
+        assert fetch(8080, upload_path, 'POST', b'test',
+                     {'Content-Type': 'application/octet-stream'})[0] == 403
+        assert set(lora_directory.iterdir()) == before
+        # Header-only oversized requests: the normal JSON/image and ComfyUI
+        # listeners reject immediately, without allocating or transmitting 35 MiB.
+        oversized = dict(headers, **{'Content-Length': str(35 * 1024 * 1024)})
+        assert fetch(8080, '/api/upload', 'POST', None, oversized)[0] == 413
+        assert fetch(8081, '/api/lora-upload', 'POST', None, oversized)[0] == 413
+        weights = b'upload-stream-smoke' * ((35 * 1024 * 1024) // 19 + 1)
+        code, _, response = fetch(8080, upload_path, 'POST', weights, upload_headers)
+        uploaded = json.loads(response)
+        assert code == 200 and uploaded['listed'], response
+        uploaded_path = lora_directory / uploaded['name']
+        uploaded_hash = hashlib.sha256(weights).hexdigest()
+        assert hashlib.sha256(uploaded_path.read_bytes()).hexdigest() == uploaded_hash
+        # An external ComfyUI may use another UID; completed files must be readable.
+        subprocess.run([sys.executable, '-c',
+                        'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]',
+                        str(uploaded_path), uploaded_hash], check=True,
+                       user=65534, group=65534, extra_groups=[])
+        assert not list(lora_directory.glob('*.part'))
         assert fetch(8080, '/api/shutdown', 'POST', {}, headers)[0] == 400
         assert fetch(8080, '/api/upload', 'POST', dict(settings=DEFAULTS, name='test.png',
             base64=base64.b64encode(b'image').decode()), headers)[0] == 200
@@ -158,6 +210,8 @@ def main():
         app.wait(10)
         entrypoint.configure()
         assert certificate == (root/'tls/server.crt').read_bytes()
+        assert persisted_lora.read_bytes() == b'configuration-smoke'
+        assert hashlib.sha256(uploaded_path.read_bytes()).hexdigest() == uploaded_hash
         app = subprocess.Popen([sys.executable, '/opt/h3/start.py', '--no-browser'], preexec_fn=drop_privileges)
         services.append(app)
         for _ in range(60):

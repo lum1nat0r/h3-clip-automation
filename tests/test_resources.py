@@ -208,8 +208,7 @@ class MemoryTests(unittest.TestCase):
         self.assertFalse(self.fake.prompts)
 
     def test_higher_load_options_are_blocked(self):
-        for settings in ({'extra_images':['extra.png']},{'reference_audio':'long.wav'},
-                         {'loras':[{'name':'big','strength':1}]}):
+        for settings in ({'extra_images':['extra.png']}, {'reference_audio':'long.wav'}):
             r=self.runner(**settings)
             with self.assertRaises(m.SafetyError):r.run()
             self.assertFalse(self.fake.prompts)

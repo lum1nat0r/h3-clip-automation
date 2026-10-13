@@ -8,6 +8,7 @@ Lokale Weboberfläche für MiniMax H3: Ein Master-Prompt beschreibt einen 30–6
 - Systemprofil für verfügbaren RAM und VRAM, berechnete oder manuelle Schwellwerte, persistente Einstellungen.
 - Modellauswahl aus installierten H3-Dateien und Empfehlungen für NVFP4, INT8 und BF16. Übernahme eines verfügbaren Profils mit einem Klick.
 - Referenzbild hochladen oder aus der vorhandenen Bildbibliothek auswählen.
+- Geordnete, variable LoRA-Auswahl mit separat einstellbarer Model-only-Stärke; Upload in einen betreiberseitig eingerichteten gemeinsamen Modellordner.
 - Automatische Take-Planung mit dynamischen Dialogrichtwerten nach Sprechtempo und nutzbarer Dauer.
 - Getrennte Vorbereitung, Videoberechnung und Ausgabe mit Speicherfreigabe zwischen den Phasen.
 - Projekte, Wiederaufnahme, vollständige Ollama-Antworten und Protokolle in der Oberfläche.
@@ -70,9 +71,43 @@ Die Oberfläche bietet außerdem installierte INT8-/FP8-/BF16-Varianten an. Empf
 
 Modellquellen: [Comfy-Org MiniMax H3](https://huggingface.co/Comfy-Org/MiniMax-H3) und [FenomAI MiniMax H3](https://huggingface.co/FenomAI/MiniMax-H3). Die Gewichte behalten ihre jeweiligen Lizenzen.
 
-Das Arbeitsprofil begrenzt neue Projekte auf höchstens 736 × 416 Bildpunkte und 736 Pixel je Seite, quadratisch bis 544 × 544. Es erlaubt ein Startbild und keine zusätzlichen Referenzen oder LoRAs. Jeder Take enthält höchstens 141 Rohframes. Die Ausgabe hat 24 fps; 30 Sekunden benötigen sieben Takes, 60 Sekunden vierzehn.
+Das Arbeitsprofil begrenzt neue Projekte auf höchstens 736 × 416 Bildpunkte und 736 Pixel je Seite, quadratisch bis 544 × 544. Es erlaubt ein Startbild und keine zusätzlichen Bild- oder Audioreferenzen. Jeder Take enthält höchstens 141 Rohframes. Die Ausgabe hat 24 fps; 30 Sekunden benötigen sieben Takes, 60 Sekunden vierzehn. Optionale LoRAs erhöhen den Speicherbedarf zusätzlich zu den Basismodell-Richtwerten; die bestehenden Speicherprüfungen bleiben aktiv.
 
 Ollama wird nach der Planung entladen. ComfyUI-Modelle und Ausführungscache werden zwischen den Phasen freigegeben. Die RAM-Abbruchreserve wird während der Berechnung überwacht. Diese Prüfungen ergänzen harte Betriebssystemgrenzen; sie ersetzen sie nicht und garantieren keinen Schutz vor jeder GPU-, Treiber- oder Speicherstörung.
+
+## LoRAs auswählen und hochladen
+
+Unter **LoRAs · optional** beliebig viele Zeilen hinzufügen oder einzeln entfernen.
+Die sichtbare Reihenfolge ist die Loader-Reihenfolge; dieselbe Datei darf mehrfach
+gewählt werden. Die Oberfläche erlaubt eine Model-only-Stärke von 0 bis 1,
+zum Beispiel `0.5` (Standard 1, Eingabeschritt 0,01). Der Wert wird unverändert
+gesendet, ohne Prozentumrechnung oder Quantisierung. Es gibt keine zusätzliche
+Textencoder-/CLIP-Stärke. Bereits gespeicherte Jobs behalten bei der Fortsetzung
+ihre ursprünglichen Werte; ältere Werte außerhalb von 0 bis 1 müssen beim
+Bearbeiten im Formular ausdrücklich angepasst werden.
+
+**Liste aktualisieren** liest die tatsächlichen `LoraLoaderModelOnly`-Dateinamen
+des aktuell eingestellten ComfyUI-Servers. Unterordner und Sonderzeichen bleiben
+exakt erhalten. Eine fehlende gespeicherte Datei bleibt markiert und entfernbar;
+die Generierung scheitert vor Planung beziehungsweise weiterer Take-Einreichung,
+wenn diese Auswahl nicht mehr vorhanden ist. Auswahländerungen über
+**Einstellungen speichern**, **Profil speichern** oder den nächsten Start sichern.
+Bestehende Projekte verwenden beim Fortsetzen ausschließlich ihre gespeicherten LoRAs.
+
+**LoRA hochladen** akzeptiert `.safetensors` bis 2 GiB. Die Datei wird gestreamt,
+mit einem zufälligen Präfix ohne Überschreiben dauerhaft gespeichert und nur bei
+bestätigtem Live-Listeneintrag als neue Zeile angehängt. „Datei gespeichert, aber
+noch nicht in ComfyUI verfügbar“ bedeutet: Datei behalten, Modellpfad prüfen und
+Liste aktualisieren, nicht erneut hochladen. Der Upload speichert keine anderen
+unfertigen Formulareingaben. Ein Listeneintrag oder erfolgreicher Upload bestätigt
+weder das Dateiformat noch H3-Kompatibilität; die Gewichte lädt allein ComfyUI.
+
+Im Container ist der persistente gemeinsame Ordner automatisch eingerichtet.
+Bei externem ComfyUI muss der Betreiber den Ordner als `loras` registrieren und
+beide Upload-Umgebungsvariablen setzen; siehe
+[LoRA-Uploadkonfiguration](DEPLOYMENT.md#lora-uploadkonfiguration).
+Ohne diese Einrichtung bleibt die Live-Auswahl vorhandener Dateien nutzbar.
+
 
 ## Projekte und Wiederaufnahme
 
@@ -103,7 +138,7 @@ python -m unittest discover -s tests -v
 node --check ui.js
 ```
 
-Node.js ist nur für die optionale JavaScript-Syntaxprüfung nötig. Die Tests simulieren ComfyUI/Ollama und verwenden für Streaming-Tests einen lokalen Testserver. Sie prüfen Steuerlogik, Wiederaufnahme, Speicherwächter, Bildbibliothek, Logs, Modellauswahl und Videoauslieferung. Sie messen keine GPU-Spitzenverbräuche und bewerten keine Bild- oder Tonqualität. Das Nodeschema unter `tests/` ist eine reduzierte Test-Fixture, keine Liste persönlicher installierter Modelle.
+Node.js ist nur für die optionale JavaScript-Syntaxprüfung nötig. Die Tests simulieren ComfyUI/Ollama und verwenden für Streaming-Tests einen lokalen Testserver. Sie prüfen Steuerlogik, Wiederaufnahme, Speicherwächter, Bildbibliothek, Logs, Modellauswahl, LoRA-Ketten, authentifizierte Streaming-Uploads und Videoauslieferung. Sie messen keine GPU-Spitzenverbräuche und bewerten keine Bild- oder Tonqualität. Das Nodeschema unter `tests/` ist eine reduzierte Test-Fixture, keine Liste persönlicher installierter Modelle.
 
 ## Herkunft und Lizenz
 

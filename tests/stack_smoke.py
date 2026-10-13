@@ -14,6 +14,8 @@ import ssl
 import subprocess
 import sys
 import time
+from urllib.parse import urlencode
+import struct
 
 sys.path.insert(0, '/opt/h3')
 from engine import DEFAULTS, atomic_json
@@ -80,15 +82,41 @@ raise SystemExit(entrypoint.main())
             state = container_memory.snapshot()
             assert state['hard_limit_verified'] and state['budget_gib'] == 8
             cert = hashlib.sha256((root/'tls/server.crt').read_bytes()).hexdigest()
+            lora_dir = root / 'comfy/models/loras'
+            def discovered(name):
+                schema = json.loads(fetch(8081, '/object_info/LoraLoaderModelOnly')[1])
+                return name in schema['LoraLoaderModelOnly']['input']['required']['lora_name'][0]
             if phase == 'init':
                 atomic_json(root/'app/settings.json', DEFAULTS)
                 atomic_json(root/'app/runs/20000101_120000_12345678/job.json',
                             dict(id='20000101_120000_12345678', status='running', settings=DEFAULTS))
-                atomic_json(marker, {'certificate':cert, 'settings':DEFAULTS})
+                header = json.dumps({'smoke': {'dtype': 'F32', 'shape': [1],
+                                              'data_offsets': [0, 4]}}).encode()
+                header += b' ' * (-len(header) % 8)
+                weights = struct.pack('<Q', len(header)) + header + struct.pack('<f', 1.0)
+                path = '/api/lora-upload?' + urlencode(
+                    {'name': 'smoke.safetensors', 'comfy_url': 'http://127.0.0.1:8188'})
+                upload_headers = {'X-H3-Token': token, 'Content-Type': 'application/octet-stream'}
+                before = set(lora_dir.iterdir())
+                assert fetch(8080, path, dict(upload_headers, Authorization=''), 'POST', weights)[0] == 401
+                assert fetch(8080, path, dict(upload_headers, **{'Sec-Fetch-Site': 'cross-site'}),
+                             'POST', weights)[0] == 403
+                assert set(lora_dir.iterdir()) == before
+                code, response = fetch(8080, path, upload_headers, 'POST', weights)
+                result = json.loads(response)
+                assert code == 200 and result['listed'], response
+                name = result['name']
+                digest = hashlib.sha256(weights).hexdigest()
+                assert hashlib.sha256((lora_dir / name).read_bytes()).hexdigest() == digest
+                assert discovered(name)
+                atomic_json(marker, {'certificate': cert, 'settings': DEFAULTS,
+                                     'lora_name': name, 'lora_sha256': digest})
             else:
                 assert cert == expected['certificate']
                 assert json.loads((root/'app/settings.json').read_text()) == expected['settings']
                 assert (root/'comfy/input/smoke.png').exists()
+                assert hashlib.sha256((lora_dir / expected['lora_name']).read_bytes()).hexdigest() == expected['lora_sha256']
+                assert discovered(expected['lora_name'])
             print('PASS: real Supervisor/ComfyUI/Ollama/app readiness, HTTPS/WebSocket/upload, cgroup telemetry; phase ' + phase)
         except BaseException:
             log.flush()

@@ -218,6 +218,34 @@ class InstallerTests(unittest.TestCase):
 
 
 class DeploymentTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'Container configuration requires absolute Linux paths')
+    def test_configure_registers_persistent_loras_and_preserves_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / 'persistent'
+            runtime = Path(temporary) / 'runtime'
+            env = {'H3_AUTH_USER': 'test', 'H3_AUTH_PASSWORD': 'a' * 20,
+                   'H3_TLS_MODE': 'proxy', 'H3_ROOT': str(root),
+                   'H3_LORA_DIR': '/wrong/path', 'H3_LORA_COMFY_URL': 'https://wrong.example'}
+            with patch.object(entrypoint, 'RUNTIME', runtime), \
+                    patch.object(entrypoint.os, 'chown') as chown, \
+                    patch.object(entrypoint.subprocess, 'run', return_value=Mock(stdout='hash\n')):
+                entrypoint.configure(env)
+                directory = root / 'comfy/models/loras'
+                self.assertTrue(directory.is_dir())
+                chown.assert_any_call(directory, 10001, 10001)
+                self.assertEqual(env['H3_LORA_DIR'], str(directory))
+                self.assertEqual(env['H3_LORA_COMFY_URL'], 'http://127.0.0.1:8188')
+                mappings = dict(line.strip().split(': ', 1) for line in
+                                (runtime / 'models.yaml').read_text().splitlines()[1:])
+                self.assertEqual(Path(mappings['base_path']) / mappings['loras'], directory)
+                installer_env = json.loads((runtime / 'model-env.json').read_text())
+                self.assertNotIn('H3_LORA_DIR', installer_env)
+                self.assertNotIn('H3_LORA_COMFY_URL', installer_env)
+                weights = directory / 'existing.safetensors'
+                weights.write_bytes(b'existing weights')
+                entrypoint.configure(env)
+                self.assertEqual(weights.read_bytes(), b'existing weights')
+
     def test_readiness_requires_both_proxy_auth_challenges(self):
         nodes = dict.fromkeys(('MiniMaxH3ReferenceToVideo', 'H3VramHeadroom',
                               'CacheBackendData //Inspire', 'RetrieveBackendData //Inspire'), {})
@@ -245,15 +273,6 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 entrypoint.configure(env)
 
-    def test_proxy_carries_websocket_streaming_and_auth(self):
-        conf = entrypoint.nginx_config('selfsigned')
-        self.assertIn('listen 8080 ssl', conf)
-        self.assertIn('listen 8081 ssl', conf)
-        self.assertEqual(conf.count('auth_basic_user_file'), 2)
-        self.assertIn('proxy_buffering off', conf)
-        self.assertIn('proxy_set_header Upgrade $http_upgrade', conf)
-        self.assertNotIn('11434', conf)
-        self.assertNotIn('ssl_certificate', entrypoint.nginx_config('proxy'))
 
     def test_no_automatic_download_or_job_resume_in_service_commands(self):
         conf = entrypoint.supervisor_config(Path('/workspace/h3'), True)

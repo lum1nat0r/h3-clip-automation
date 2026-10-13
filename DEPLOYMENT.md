@@ -224,6 +224,8 @@ Quellen: [Templates](https://docs.vast.ai/guides/templates/template-settings),
 | `HF_TOKEN` | Optionaler Hugging-Face-Downloadtoken |
 | `H3_ROOT` | Container-Datenstamm, `/workspace/h3`; absolut ohne Leerzeichen |
 | `H3_DATA_DIR` | App-Datenverzeichnis; Container setzt es auf `H3_ROOT/app` |
+| `H3_LORA_DIR` | Vorhandener absoluter, beschreibbarer gemeinsamer LoRA-Ordner; Container setzt `H3_ROOT/comfy/models/loras` |
+| `H3_LORA_COMFY_URL` | Exakte zugehörige HTTP(S)-ComfyUI-Basisadresse; Container setzt `http://127.0.0.1:8188` |
 | `H3_MEMORY_MODE` | `cgroup` (Standard) oder ausdrücklich `budget` |
 | `H3_RAM_BUDGET_GIB` | Erforderlich im Budgetmodus; optionaler niedrigerer Planungsdeckel im cgroup-Modus |
 | `H3_TLS_MODE` | `selfsigned`, `certificate` oder `proxy` hinter HTTPS-Terminierung |
@@ -240,6 +242,51 @@ Der Datenstamm enthält `app/` (Einstellungen, Jobs, Bildbibliothek), `comfy/mod
 dateien. Containerdienste laufen als UID/GID 10001. Vorhandene Bind-Mount-Daten
 müssen für diese UID schreibbar sein. Keine Produktionsdaten ungeprüft einbinden.
 Der Entrypoint ändert keine Dateien einer anderen laufenden Installation.
+
+### LoRA-Uploadkonfiguration
+
+Im All-in-one-Container legt der Entrypoint `H3_ROOT/comfy/models/loras` mit
+UID/GID 10001 an, registriert ihn über `/run/h3/models.yaml` als `loras` und
+vererbt die abgeleiteten Uploadvariablen an die Anwendung. Das bestehende Volume
+erhält die Dateien nach Container-Neuerstellung; keine Erweiterung ist nötig.
+
+Für externes ComfyUI muss **derselbe Ordner** für Controller und ComfyUI verfügbar
+sein, beispielsweise über einen gemeinsamen Mount. In ComfyUI als `loras`
+registrieren und den Controller mit beiden Variablen starten, unter PowerShell:
+
+```powershell
+$env:H3_LORA_DIR = 'D:\gemeinsame-modelle\loras'
+$env:H3_LORA_COMFY_URL = 'http://127.0.0.1:8188'
+python start.py
+```
+
+Unter Linux dieselben Variablen exportieren. Der Zielordner muss bereits
+existieren und für den Controller beschreibbar sein. Beim lokalen Start lädt
+`start.py` keine `.env` automatisch. Die normalisierten Basisadressen müssen
+exakt übereinstimmen: `localhost` ist nicht `127.0.0.1`. Der Browser kann keinen
+Zielordner bestimmen. Fehlende oder falsche Zuordnung sperrt nur Uploads;
+vorhandene serverseitige LoRAs bleiben auswählbar.
+
+Unvollständige `.part`-Dateien bleiben privat. Vollständige Dateien werden vor
+atomarer Veröffentlichung mit POSIX-Modus `0644` lesbar gemacht, damit externes
+ComfyUI unter einer anderen UID darauf zugreifen kann. Der Betreiber begrenzt
+den Zugriff auf die Gewichte über die Berechtigungen des gemeinsamen Ordners.
+
+Der authentifizierte Rohdaten-Endpunkt
+`POST /api/lora-upload?name=<Dateiname>&comfy_url=<Basisadresse>` verlangt
+`application/octet-stream`, einen eindeutigen `Content-Length` und das
+Sitzungstoken. Bis 2 GiB, 120 Sekunden Read-Timeout, höchstens 1 MiB pro Read;
+Dateigröße plus 2 GiB freie Datenträgerreserve sind erforderlich. Upload,
+Generierung und Modellinstallation teilen dieselbe Activity-Lease. Eine belegte
+ComfyUI-Queue wird nicht unterbrochen. Direkte ComfyUI-Generierung während eines
+Uploads unterlassen; die Queueprüfung ist keine serverübergreifende Sperre.
+
+Nginx erlaubt 2048 MiB ausschließlich für diesen exakten Controller-Endpunkt.
+Alle übrigen App- und ComfyUI-Routen behalten 34 MiB, Anmeldung und Cross-Site-
+Schutz gelten weiterhin. Nur `.safetensors` werden hochgeladen; andere vom Server
+unterstützte vorhandene Dateiformate bleiben auswählbar. Ein Upload ist kein
+Nachweis für H3-Kompatibilität oder GPU-Speichersicherheit.
+
 
 ## Speicher, Neustarts und bestehende lokale Installation
 
@@ -301,9 +348,10 @@ docker run --rm --network none --entrypoint python h3-clip-automation:portable /
 docker run --rm --network none --entrypoint python h3-clip-automation:portable /opt/h3/tests/comfy_import_smoke.py
 ```
 
-Der erste Test verwendet echte App, Nginx und SSH mit simulierten KI-APIs. Der
-zweite startet das echte ComfyUI auf CPU und prüft die benötigten Nodes sowie
-Start-, Fortsetzungs- und Phasengraphen gegen deren tatsächliche Schemas.
+Der erste Test verwendet echte App, Nginx und SSH mit simulierten KI-APIs und
+prüft auch LoRA-Uploads über 34 MiB, Authentifizierung und Routengrenzen. Der
+zweite startet echtes ComfyUI auf CPU und prüft die benötigten Nodes sowie
+Start-, Fortsetzungs- und Phasengraphen mit geordneter LoRA-Kette gegen echte Schemas.
 
 Den gesamten Supervisor-Stack einschließlich echter Ollama-/ComfyUI-Dienste auf
 CPU und seine Persistenz nach Container-Neuerstellung prüfen:
@@ -316,7 +364,9 @@ docker volume rm h3-disposable-verification
 ```
 
 Dafür ein **neues**, ausschließlich für den Test bestimmtes Volume verwenden.
-Die Prüfung erzeugt keine Gewichte und reicht keine Generierungsaufträge ein.
+Die Prüfung erzeugt ausschließlich eine kleine Safetensors-Testdatei, lädt keine
+Gewichte und reicht keine Generierungsaufträge ein. Upload über App/Nginx,
+echte LoRA-Discovery, Name und SHA-256 werden nach Container-Neuerstellung geprüft.
 
 Die Readiness-Prüfung prüft App, Ollama, benötigte ComfyUI-Nodes und die Anmeldung
 beider Nginx-Listener, ohne Modelle zu laden. Eine frische Instanz ist dadurch erreichbar, während die Modellinstallation

@@ -10,6 +10,9 @@ import engine as e
 from library import job_details
 from staging import split_graph, cache_keys, cache_present, clear_cache
 
+LORAS = [{"name": "styles/test.safetensors", "strength": 0.35},
+         {"name": "characters/test [v1].safetensors", "strength": -0.2}]
+
 
 class StagingTests(unittest.TestCase):
     def setUp(self):
@@ -37,6 +40,85 @@ class StagingTests(unittest.TestCase):
             self.assertEqual(decode['19']['inputs']['pins'],['98',0])
             self.assertEqual(sample['10']['class_type'],g['10']['class_type'])
             self.assertEqual(sample['9']['inputs']['key'],enc['90']['inputs']['key'])
+
+    def test_lora_chains_survive_stage_boundaries_without_id_collisions(self):
+        for count in (0, 2, 40, 100):
+            c = {**self.r.state['settings'], 'loras': [copy.deepcopy(LORAS[i % 2]) for i in range(count)]}
+            for previous in (None, 'h3_automatik/test/take.mp4'):
+                with self.subTest(count=count, previous=previous):
+                    g = e.build_graph(c, 'text', e.schedule(30)[bool(previous)], 'test', 12, previous)
+                    e.validate_graph(g, SCHEMA)
+                    enc, sample, decode = split_graph(g, 'a' * 32)
+                    for stage in (enc, sample, decode):
+                        e.validate_graph(stage, SCHEMA)
+                    for stage in (enc, decode):
+                        self.assertNotIn('LoraLoaderModelOnly', {n['class_type'] for n in stage.values()})
+                    last = ['1', 0]
+                    for i, lora in enumerate(c['loras']):
+                        loader = sample[f'lora_{i}']
+                        self.assertEqual(loader['inputs'], {
+                            'model': last, 'lora_name': lora['name'], 'strength_model': lora['strength']})
+                        last = [f'lora_{i}', 0]
+                    self.assertEqual(sample['2']['inputs']['model'], last)
+                    self.assertEqual(sample['11']['inputs']['latent'], ['89', 0])
+                    self.assertEqual(decode['19']['inputs']['samples'], ['96', 0])
+                    self.assertEqual(decode['19']['inputs']['pins'], ['98', 0])
+
+    def test_loras_complete_export_and_recover_lost_sampling_response(self):
+        for lost in (False, True):
+            with self.subTest(lost=lost):
+                fake = FakeServices()
+                fake.drop_response = lost
+                directory = Path(self.temp.name) / ('lost' if lost else 'complete')
+                r = e.Runner(directory, lambda _: None, call=fake, poll_seconds=0)
+                r.new({'image': 'test.png', 'loras': LORAS}, 'Quiet scene')
+                if lost:
+                    with self.assertRaises(e.JobError):
+                        r.run()
+                    e.atomic_json(Path(self.temp.name) / 'settings.json', {'loras': []})
+                    r = e.Runner(directory, lambda _: None, call=fake, poll_seconds=0)
+                final = r.run()
+                self.assertEqual(r.state['settings']['loras'], LORAS)
+                self.assertEqual(r.state['status'], 'complete')
+                self.assertEqual(final, r.state['final_path'])
+                self.assertEqual(len(fake.prompts), 7)
+                self.assertEqual(len(fake.encodings), 7)
+                self.assertEqual(len(fake.decodings), 7)
+                self.assertFalse(fake.cache)
+                self.assertIsNotNone(fake.export_args)
+                for g in fake.prompts:
+                    self.assertEqual(g['lora_0']['inputs']['lora_name'], LORAS[0]['name'])
+                    self.assertEqual(g['lora_0']['inputs']['strength_model'], 0.35)
+                    self.assertEqual(g['lora_1']['inputs']['model'], ['lora_0', 0])
+                    self.assertEqual(g['lora_1']['inputs']['strength_model'], -0.2)
+                    self.assertEqual(g['2']['inputs']['model'], ['lora_1', 0])
+
+    def test_missing_lora_stops_before_planning_and_submission(self):
+        for missing in ('loader', 'empty', 'removed'):
+            with self.subTest(missing=missing):
+                fake = FakeServices()
+                if missing == 'loader':
+                    del fake.objects['LoraLoaderModelOnly']
+                else:
+                    fake.objects['LoraLoaderModelOnly']['input']['required']['lora_name'][0] = (
+                        [] if missing == 'empty' else [LORAS[0]['name']])
+                r = e.Runner(Path(self.temp.name) / missing, lambda _: None, call=fake, poll_seconds=0)
+                r.new({'image': 'test.png', 'loras': LORAS}, 'Quiet scene')
+                with self.assertRaisesRegex(e.JobError, 'LoraLoaderModelOnly|LoRA.*nicht vorhanden'):
+                    r.run()
+                self.assertFalse(any(route in ('/api/chat', '/prompt') for route, _ in fake.calls))
+
+    def test_lora_removed_between_takes_stops_next_submission(self):
+        def call(base, route, data=None, timeout=30):
+            if route == '/object_info' and self.fake.decodings:
+                self.fake.objects['LoraLoaderModelOnly']['input']['required']['lora_name'][0] = []
+            return self.fake(base, route, data, timeout)
+        self.r.new({'image': 'test.png', 'loras': LORAS}, 'Quiet scene')
+        self.r.call = call
+        with self.assertRaisesRegex(e.JobError, 'LoRA.*nicht vorhanden'):
+            self.r.run()
+        self.assertEqual(len(self.fake.prompts), 1)
+        self.assertEqual(len(self.fake.encodings), 1)
 
     def test_encoder_submission_recovered_without_duplicate_or_replanning(self):
         self.fake.drop_encoding_response=True

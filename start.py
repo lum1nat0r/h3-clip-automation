@@ -19,12 +19,13 @@ from pathlib import Path
 
 from engine import (DEFAULTS, JobError, Paused, Runner, atomic_json, choices,
                     input_specs, normalize_settings, preflight, request)
-from library import image_catalog, image_preview, job_details, job_file, remember_images
+from library import image_catalog, image_preview, job_details, job_file, remember_images, lora_catalog
 from resources import safe_new_settings, MAX_PIXELS, MAX_SIDE
 from media import MEDIA_ROUTE, playback_url, serve_video
 import hardware
 import container_memory
 from runtime_lock import exclusive
+from lora_upload import upload_options, store_lora, MAX_BYTES
 
 SOURCE = Path(__file__).resolve().parent
 BASE = Path(os.environ.get('H3_DATA_DIR', str(SOURCE))).resolve()
@@ -288,9 +289,45 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def lora_upload(self, route):
+        try:
+            params = urllib.parse.parse_qs(route.query, keep_blank_values=True)
+            if set(params) != {'name', 'comfy_url'} or any(len(v) != 1 or not v[0] for v in params.values()):
+                raise JobError("LoRA-Upload benötigt genau einen Dateinamen und eine ComfyUI-Adresse.")
+            if self.headers.get_all('Transfer-Encoding'):
+                raise JobError("Transfer-Encoding ist für LoRA-Uploads nicht erlaubt.")
+            lengths = self.headers.get_all('Content-Length', [])
+            if len(lengths) != 1 or not re.fullmatch(r'[0-9]+', lengths[0]):
+                raise JobError("LoRA-Upload benötigt genau einen dezimalen Content-Length.")
+            length = int(lengths[0])
+            if length > MAX_BYTES:
+                self.close_connection = True
+                return self.send({'error': 'LoRA-Datei ist größer als 2 GiB.'}, 413)
+            if length <= 0:
+                raise JobError("LoRA-Datei ist leer.")
+            if self.headers.get_all('Content-Type') != ['application/octet-stream']:
+                raise JobError("LoRA-Upload benötigt Content-Type application/octet-stream.")
+            c = normalize_settings({'comfy_url': params['comfy_url'][0]})
+            with LOCK:
+                if CURRENT['running']:
+                    raise JobError("Während der Generierung sind LoRA-Uploads gesperrt.")
+            self.connection.settimeout(120)
+            name = store_lora(self.rfile, length, params['name'][0], c['comfy_url'], BASE)
+            catalog = lora_catalog(c)
+            listed = name in catalog['loras']
+            warning = '' if listed else 'Datei gespeichert, aber noch nicht in ComfyUI verfügbar. LoRA-Modellpfad prüfen und Liste aktualisieren.'
+            return self.send({'name': name, 'listed': listed, 'warning': warning})
+        except Exception as exc:
+            self.close_connection = True
+            return self.send({'error': str(exc)}, 400)
+
     def do_POST(self):
         if not self.trusted_host() or self.headers.get("X-H3-Token") != TOKEN:
+            self.close_connection = True
             return self.send({"error": "Sitzung bitte neu laden."}, 403)
+        route = urllib.parse.urlsplit(self.path)
+        if route.path == '/api/lora-upload':
+            return self.lora_upload(route)
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= 34 * 1024 * 1024:
@@ -318,6 +355,11 @@ class Handler(BaseHTTPRequestHandler):
                         raise JobError('Dieses Modellprofil ist nicht verfügbar oder passt nicht zum Speicherbudget.')
                     c = save_preferences({**info['settings'], **preset['models']})
                     return self.send({'settings':c, 'message':'Modellprofil übernommen und gespeichert.'})
+            if self.path == '/api/loras':
+                c = normalize_settings(data['settings'])
+                result = lora_catalog(c)
+                result['upload'] = upload_options(c['comfy_url'])
+                return self.send(result)
             if self.path == "/api/images":
                 return self.send(image_catalog(BASE, normalize_settings(data["settings"])))
             if self.path == "/api/image-preview":

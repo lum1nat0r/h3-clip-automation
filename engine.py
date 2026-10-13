@@ -150,6 +150,22 @@ def normalize_settings(settings):
         raise JobError("Ausgabepräfix bitte als einen Ordnernamen ohne Unterordner angeben.")
     if len(c["extra_images"]) > 3:
         raise JobError("Höchstens drei zusätzliche Bildreferenzen.")
+    if not isinstance(c["loras"], list):
+        raise JobError("LoRAs müssen eine Liste aus Objekten sein.")
+    for i, lora in enumerate(c["loras"], 1):
+        if not isinstance(lora, dict) or "name" not in lora or "strength" not in lora:
+            raise JobError(f"LoRA {i}: Name und Stärke sind erforderlich.")
+        name = lora["name"]
+        if not isinstance(name, str) or not name.strip() or any(ch in name for ch in "\x00\r\n"):
+            raise JobError(f"LoRA {i}: Ein nichtleerer Name ohne NUL oder Zeilenumbrüche ist erforderlich.")
+        strength = lora["strength"]
+        try:
+            strength = float(strength) if type(strength) in (int, float) else math.nan
+        except OverflowError:
+            strength = math.nan
+        if not math.isfinite(strength) or not -100 <= strength <= 100:
+            raise JobError(f"LoRA {i}: Stärke muss eine endliche Zahl zwischen -100 und 100 sein.")
+        c["loras"][i - 1] = {"name": name, "strength": strength}
     for key, lo, hi in (("speech_wpm", 60, 240), ("speech_pause_seconds", 0, 1.5)):
         c[key] = float(c[key])
         if not lo <= c[key] <= hi:
@@ -404,8 +420,8 @@ def build_graph(c, prompt, slot, folder, seed, previous=None):
     node(1, "UNETLoader", unet_name=c["unet"], weight_dtype="default")
     model = wire(1)
     for i, lora in enumerate(c["loras"]):
-        node(50+i, "LoraLoaderModelOnly", model=model, lora_name=lora["name"], strength_model=float(lora["strength"]))
-        model = wire(50+i)
+        node(f"lora_{i}", "LoraLoaderModelOnly", model=model, lora_name=lora["name"], strength_model=float(lora["strength"]))
+        model = wire(f"lora_{i}")
     node(2, "MiniMaxH3SigmaShift", model=model, shift_video=12.0, shift_audio=3.0)
     node(3, "ModelAttentionBackend", model=wire(2), attention="pytorch attention")
     node(4, "H3VramHeadroom", model=wire(3), enabled=True, headroom_gb=c["headroom_gb"], count_guides=True)
@@ -455,6 +471,19 @@ def input_specs(info):
 
 def choices(spec):
     return spec[0] if isinstance(spec[0], list) else (spec[1].get("options", []) if len(spec) > 1 else [])
+
+
+def validate_lora_selection(c, objects):
+    if not c.get("loras"):
+        return
+    info = objects.get("LoraLoaderModelOnly")
+    if info is None:
+        raise JobError("ComfyUI-Node fehlt: LoraLoaderModelOnly")
+    spec = input_specs(info).get("lora_name")
+    available = choices(spec) if spec else []
+    for lora in c["loras"]:
+        if lora["name"] not in available:
+            raise JobError("LoRA ist auf diesem ComfyUI-Server nicht vorhanden: " + lora["name"])
 
 
 def validate_graph(g, objects, skip_file_choices=False):
@@ -527,6 +556,7 @@ def validate_graph(g, objects, skip_file_choices=False):
 
 def preflight(c, call=request, require_image=True):
     objects = call(c["comfy_url"], "/object_info")
+    validate_lora_selection(c, objects)
     for kind in ('CacheBackendData //Inspire', 'RetrieveBackendData //Inspire'):
         if kind not in objects:
             raise JobError('Für die getrennte Prompt-Vorbereitung fehlt die bereits vorgesehene Inspire-Node: ' + kind)
@@ -838,6 +868,7 @@ class Runner:
                 prev = s["takes"][-1]["clip"] if s["takes"] else None
                 graph = build_graph(c, text, slot, s["folder"], (s["seed"] + i) % 2**63, prev)
                 objects = self.call(c["comfy_url"], "/object_info")
+                validate_lora_selection(c, objects)
                 validate_graph(graph, objects)
                 encoded = s.get('encoding')
                 sampled = s.get('sampling')

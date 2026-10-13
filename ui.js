@@ -10,17 +10,19 @@ function notice(text,error=false){$('notice').textContent=text;$('notice').class
 const hardwareFields=['ram_available_gib','vram_gib','gpu_arch','threshold_mode','ram_start_gib','ram_stop_gib','vram_start_gib'];
 const modelFields=['unet','clip','video_vae','audio_vae'];
 let hardwareData=null, hardwareBlocked=false, hardwareSequence=0, hardwareTimer=null, hardwareLoading=false;
-function values(){const c={...config};for(const f of fields)c[f]=numbers.has(f)?Number($(f).value):$(f).value.trim();c.hardware_profile={};for(const f of hardwareFields)c.hardware_profile[f]=['gpu_arch','threshold_mode'].includes(f)?$(f).value:Number($(f).value);c.hardware_profile.headroom_gib=c.headroom_gb;return c}
+let loraNames=[], loraStrength={default:1,min:0,max:1,step:.01}, loraUploadOptions={available:false,reason:'LoRA-Uploadkonfiguration wird geprüft.',max_bytes:2147483648};
+let loraSequence=0, loraRowCounter=0, loraServer='', loraLoading=false, loraUploading=false, loraInitialized=false;
+function values(){const c={...config};for(const f of fields)c[f]=numbers.has(f)?Number($(f).value):$(f).value.trim();c.hardware_profile={};for(const f of hardwareFields)c.hardware_profile[f]=['gpu_arch','threshold_mode'].includes(f)?$(f).value:Number($(f).value);c.hardware_profile.headroom_gib=c.headroom_gb;c.loras=[];for(const [i,row] of Array.from($('loraRows').children).entries()){const select=row.querySelector('select'),input=row.querySelector('input');if(!select.value)continue;const strength=Number(input.value);if(!input.value.trim()||!Number.isFinite(strength)||strength<loraStrength.min||strength>loraStrength.max)throw Error(`LoRA ${i+1}: Stärke muss eine endliche Zahl zwischen ${loraStrength.min} und ${loraStrength.max} sein.`);c.loras.push({name:select.value,strength})}return c}
 function modelOptions(c){for(const role of modelFields){const select=$(role);select.replaceChildren();for(const m of hardwareData?.options?.[role]||[]){const o=document.createElement('option');o.value=m.path||m.filename;o.disabled=!m.installed;o.textContent=m.label+' · '+(m.path||'nicht installiert');select.append(o)}if(!Array.from(select.options).some(o=>o.value===c[role])){const o=document.createElement('option');o.value=c[role]||'';o.textContent=(c[role]||'Bitte ein installiertes Modell wählen')+' · gespeichert / ungeprüft';select.append(o)}select.value=c[role]||''}}
-function fill(c){config=c;modelOptions(c);for(const f of fields)$(f).value=c[f]??'';for(const f of hardwareFields)$(f).value=c.hardware_profile?.[f]??'';selectedPicture();memoryHint()}
+function fill(c){const previousServer=$('comfy_url').value.trim().replace(/\/+$/,'');config=c;modelOptions(c);for(const f of fields)$(f).value=c[f]??'';for(const f of hardwareFields)$(f).value=c.hardware_profile?.[f]??'';$('loraRows').replaceChildren();for(const lora of c.loras||[])addLoraRow(lora.name,lora.strength);selectedPicture();memoryHint();loraBusy();if(loraInitialized&&previousServer!==c.comfy_url)refreshLoras()}
 function memoryHint(){const w=Number($('width').value),h=Number($('height').value);if(!(w>0&&h>0))return;const s=Math.min(1,Math.sqrt(736*416/(w*h)),736/Math.max(w,h));const a=Math.max(128,Math.floor(w*s/32)*32),b=Math.max(128,Math.floor(h*s/32)*32);$('memoryHint').textContent=`Neue Projekte werden mit ${a} × ${b} Pixeln erzeugt.${a!==w||b!==h?' Die größere Eingabe wird für das 16-GB-Profil verkleinert.':''}`}
 $('width').oninput=memoryHint;$('height').oninput=memoryHint;
-function hardwareBusy(){for(const id of [...hardwareFields,...modelFields,'headroom_gb','hardwareSave','hardwareRefresh','reviewPrompts'])$(id).disabled=busy||hardwareLoading;for(const b of document.querySelectorAll('[data-preset]'))b.disabled=busy||hardwareLoading||b.dataset.available!=='true';$('run').disabled=busy||serverBlocked||hardwareBlocked||hardwareLoading}
+function hardwareBusy(){for(const id of [...hardwareFields,...modelFields,'headroom_gb','hardwareSave','hardwareRefresh','reviewPrompts'])$(id).disabled=busy||loraUploading||hardwareLoading;for(const b of document.querySelectorAll('[data-preset]'))b.disabled=busy||loraUploading||hardwareLoading||b.dataset.available!=='true';$('run').disabled=busy||loraUploading||serverBlocked||hardwareBlocked||hardwareLoading}
 async function hardwareAttempt(fn){try{await fn()}catch(e){$('hardwareIssues').textContent=e.message}}
 function renderHardware(info){
  hardwareData=info;hardwareBlocked=info.issues.length>0;
  for(const f of hardwareFields)$(f).value=info.settings.hardware_profile[f];$('headroom_gb').value=info.settings.headroom_gb;
- modelOptions(values());
+ modelOptions(Object.fromEntries(modelFields.map(role=>[role,$(role).value])));
  const p=info.settings.hardware_profile;
  $('hardwareBudget').textContent=`Für die Planung: ${info.effective_ram_gib} GiB RAM${info.verified_budget_gib?` · geprüfte Containergrenze: ${info.verified_budget_gib} GiB`:' · Servergrenze noch nicht bestätigt'}. Start: ${p.ram_start_gib} GiB RAM / ${p.vram_start_gib} GiB VRAM frei. RAM-Stopp unter ${p.ram_stop_gib} GiB. GPU-Reserve: ${p.headroom_gib} GiB.${info.gpu_name?' Erkannte GPU: '+info.gpu_name+'.':''}`;
  $('hardwareIssues').textContent=[info.warning,...info.issues].filter(Boolean).join('\n');
@@ -44,6 +46,71 @@ $('hardwareSave').onclick=()=>hardwareAttempt(async()=>{const r=await api('save'
 async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'Content-Type':'application/json','X-H3-Token':token},body:data?JSON.stringify(data):undefined});const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j}
 async function attempt(fn){try{await fn()}catch(e){notice(e.message,true)}}
 function button(text,fn){const b=document.createElement('button');b.className='secondary';b.textContent=text;b.onclick=fn;return b}
+function loraNotice(text,error=false){const reason=!loraUploadOptions.available?loraUploadOptions.reason:'';$('loraMessage').textContent=[text,reason].filter(Boolean).join('\n');$('loraMessage').classList.toggle('error',error)}
+function loraBusy(){
+ const locked=busy||loraUploading;
+ for(const row of $('loraRows').children)for(const control of row.querySelectorAll('select,input,button'))control.disabled=locked||loraLoading;
+ $('loraEmpty').hidden=$('loraRows').children.length>0;
+ $('loraAdd').disabled=locked||loraLoading;$('loraRefresh').disabled=locked||loraLoading;
+ $('loraUpload').disabled=locked||loraLoading||!loraUploadOptions.available||loraServer!==$('comfy_url').value.trim().replace(/\/+$/,'');
+ for(const id of ['check','save','upload','picturepick',...fields])$(id).disabled=locked;
+ for(const b of document.querySelectorAll('[data-resume],.picture-tile'))b.disabled=locked||b.dataset.blocked==='true'||(b.dataset.startsJob==='true'&&serverBlocked);
+ $('reviewContinue').disabled=locked||serverBlocked;
+ hardwareBusy();
+}
+function loraOptions(select,name){
+ select.replaceChildren(new Option('Bitte LoRA wählen',''));
+ const verified=loraServer===$('comfy_url').value.trim().replace(/\/+$/,'');
+ for(const filename of verified?loraNames:[])select.append(new Option(filename,filename));
+ if(name&&!Array.from(select.options).some(o=>o.value===name))select.append(new Option(name+' · nicht verfügbar / ungeprüft',name));
+ select.value=name;
+}
+function loraMetadata(input){for(const key of ['min','max','step'])input[key]=loraStrength[key]}
+function addLoraRow(name='',strength=1){
+ const id=++loraRowCounter,row=document.createElement('div');row.className='lora-row';
+ const selection=document.createElement('div'),nameLabel=document.createElement('label'),select=document.createElement('select');
+ select.id=`loraName_${id}`;nameLabel.htmlFor=select.id;nameLabel.textContent='LoRA-Datei';loraOptions(select,name);selection.append(nameLabel,select);
+ const weight=document.createElement('div'),strengthLabel=document.createElement('label'),input=document.createElement('input');
+ input.id=`loraStrength_${id}`;input.type='number';loraMetadata(input);input.value=strength;strengthLabel.htmlFor=input.id;strengthLabel.textContent='Stärke';weight.append(strengthLabel,input);
+ const remove=button('Entfernen',()=>{row.remove();loraBusy()});remove.setAttribute('aria-label',`LoRA-Zeile ${id} entfernen`);
+ row.append(selection,weight,remove);$('loraRows').append(row);loraBusy();return select;
+}
+async function refreshLoras(){
+ const sequence=++loraSequence,server=$('comfy_url').value.trim().replace(/\/+$/,'');
+ loraLoading=true;loraServer='';loraNames=[];loraUploadOptions={available:false,reason:'LoRA-Uploadkonfiguration wird geprüft.',max_bytes:2147483648};
+ for(const row of $('loraRows').children){const select=row.querySelector('select');loraOptions(select,select.value)}
+ loraNotice('Lade LoRA-Liste …');loraBusy();
+ try{
+  const result=await api('loras',{settings:{comfy_url:server}});
+  if(sequence!==loraSequence||server!==$('comfy_url').value.trim().replace(/\/+$/,''))return false;
+  loraNames=result.loras;loraStrength={...result.strength,min:Math.max(0,result.strength.min),max:Math.min(1,result.strength.max),step:.01};loraUploadOptions=result.upload;loraServer=server;
+  for(const row of $('loraRows').children){const select=row.querySelector('select');loraOptions(select,select.value);loraMetadata(row.querySelector('input'))}
+  $('loraStrengthRange').textContent=`Stärke je LoRA: ${loraStrength.min} bis ${loraStrength.max}, Eingabeschritt ${loraStrength.step}.`;
+  loraNotice(result.warning||(loraNames.length?'':'Keine LoRAs auf diesem ComfyUI-Server gefunden.'),!!result.warning);
+  return true;
+ }catch(e){if(sequence===loraSequence&&server===$('comfy_url').value.trim().replace(/\/+$/,'')){loraUploadOptions={available:false,reason:'Uploadkonfiguration konnte nicht geprüft werden.',max_bytes:2147483648};loraNotice(e.message,true)}return false}
+ finally{if(sequence===loraSequence){loraLoading=false;loraBusy()}}
+}
+$('loraAdd').onclick=()=>addLoraRow().focus();
+$('loraRefresh').onclick=refreshLoras;
+$('loraUpload').onclick=()=>$('loraFile').click();
+$('loraFile').onchange=async()=>{
+ const file=$('loraFile').files[0];if(!file)return;
+ let uploadedSelection=null;
+ try{
+  if(busy||loraUploading||!loraUploadOptions.available)throw Error('LoRA-Upload ist derzeit gesperrt.');
+  if(!/\.safetensors$/i.test(file.name))throw Error('Bitte eine .safetensors-Datei wählen.');
+  if(!file.size||file.size>loraUploadOptions.max_bytes)throw Error('LoRA-Datei muss zwischen 1 Byte und 2 GiB groß sein.');
+  const server=$('comfy_url').value.trim().replace(/\/+$/,'');
+  loraUploading=true;loraBusy();loraNotice('LoRA wird hochgeladen. Bitte die Seite geöffnet lassen …');
+  const query=new URLSearchParams({name:file.name,comfy_url:server});
+  const response=await fetch('/api/lora-upload?'+query,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-H3-Token':token},body:file});
+  const result=await response.json();if(!response.ok)throw Error(result.error||response.statusText);
+  if(result.listed){await refreshLoras();uploadedSelection=addLoraRow(result.name,1);const warning=$('loraMessage').textContent;loraNotice(['LoRA gespeichert und hinzugefügt. Auswahl mit den Speicherbuttons oder beim nächsten Start sichern.',warning].filter(Boolean).join('\n'))}
+  else loraNotice(result.warning);
+ }catch(e){loraNotice(e.message,true)}
+ finally{loraUploading=false;$('loraFile').value='';loraBusy();uploadedSelection?.focus()}
+};
 function nextThumbnail(){
  while(thumbnailActive<4&&thumbnailQueue.length){const task=thumbnailQueue.shift();thumbnailActive++;task().finally(()=>{thumbnailActive--;nextThumbnail()})}
 }
@@ -66,8 +133,8 @@ function selectedPicture(){
  loadThumbnail($('selectedThumbnail'),$('comfy_url').value,path);
 }
 $('selectedThumbnail').onerror=()=>$('selectedThumbnail').classList.add('hidden');
-$('image').onchange=selectedPicture;$('comfy_url').onchange=()=>{selectedPicture();hardwareData=null;hardwareChanged()};$('ollama_url').onchange=()=>hardwareChanged();
-$('check').onclick=()=>attempt(async()=>{notice('Prüfe Verbindungen und Nodes …');$('check').disabled=true;try{const r=await api('check',{settings:values()});fill(r.settings);$('images').replaceChildren(...r.images.map(x=>{const o=document.createElement('option');o.value=x;return o}));notice(r.message)}finally{$('check').disabled=busy}});
+$('image').onchange=selectedPicture;$('comfy_url').onchange=()=>{selectedPicture();hardwareData=null;hardwareChanged();refreshLoras()};$('ollama_url').onchange=()=>hardwareChanged();
+$('check').onclick=()=>attempt(async()=>{notice('Prüfe Verbindungen und Nodes …');$('check').disabled=true;try{const r=await api('check',{settings:values()});fill(r.settings);$('images').replaceChildren(...r.images.map(x=>{const o=document.createElement('option');o.value=x;return o}));notice(r.message)}finally{loraBusy()}});
 $('save').onclick=()=>attempt(async()=>{const r=await api('save',{settings:values()});fill(r.settings);notice(r.message);await refreshHardware(false)});
 $('upload').onclick=()=>$('file').click();
 $('file').onchange=()=>attempt(async()=>{
@@ -103,15 +170,13 @@ function renderPictures(){
 $('picturepick').onclick=()=>{if(busy)return;$('picturePicker').showModal();$('pictureSearch').value='';loadPictures()};
 $('pictureClose').onclick=()=>$('picturePicker').close();$('pictureRefresh').onclick=loadPictures;
 $('pictureSearch').oninput=()=>{pictureLimit=24;renderPictures()};$('pictureMore').onclick=()=>{pictureLimit+=24;renderPictures()};
-$('run').onclick=()=>attempt(async()=>{if(busy)return;const m=$('master').value.trim();if(!m)throw Error('Bitte den gesamten Clip in einer Zeile beschreiben.');$('run').disabled=true;try{const review=$('reviewPrompts').checked;const r=await api('start',{settings:values(),master_prompt:m,review_prompts:review});fill(r.settings);notice(review?'Ollama plant den Clip. Danach kannst du alle Take-Prompts prüfen.':'Automatischer Ablauf mit Speicherprüfung gestartet.');await poll()}catch(e){$('run').disabled=false;throw e}});
+$('run').onclick=()=>attempt(async()=>{if(busy||loraUploading)return;const m=$('master').value.trim();if(!m)throw Error('Bitte den gesamten Clip in einer Zeile beschreiben.');$('run').disabled=true;try{const review=$('reviewPrompts').checked;const r=await api('start',{settings:values(),master_prompt:m,review_prompts:review});fill(r.settings);notice(review?'Ollama plant den Clip. Danach kannst du alle Take-Prompts prüfen.':'Automatischer Ablauf mit Speicherprüfung gestartet.');await poll()}catch(e){hardwareBusy();throw e}});
 $('pause').onclick=()=>attempt(async()=>notice((await api('pause',{})).message));
 async function poll(){
  try{
   const s=await api('status');busy=s.running;serverBlocked=s.server_safety?.blocked!==false;$('pause').disabled=!busy;
   $('serverSafety').textContent=serverBlocked?(s.server_safety?.reason||'Server-Speicherschutz noch nicht geprüft.'):(s.server_safety?.warning||'');
-  for(const id of ['check','save','upload','picturepick',...fields])$(id).disabled=busy;
-  hardwareBusy();
-  for(const b of document.querySelectorAll('[data-resume],.picture-tile'))b.disabled=busy||b.dataset.blocked==='true'||(b.dataset.startsJob==='true'&&serverBlocked);
+  loraBusy();
   if(!s.job)return;
   $('progresscard').classList.remove('hidden');$('status').textContent=s.prompt_review_pending?'Ollama-Prompts prüfen':labels[s.status]||s.status;$('reviewPromptsOpen').classList.toggle('hidden',!s.prompt_review_pending);$('count').textContent=`${s.done||0} / ${s.total||0} Takes`;
   $('progress').max=s.total||1;$('progress').value=s.done||0;$('log').textContent=s.messages.join('\n');
@@ -131,8 +196,8 @@ async function jobs(){
   const actions=document.createElement('div');actions.className='job-actions';actions.append(button('Logs & Ollama',()=>openJob(j.id)));
   if(j.final_url){actions.append(button('Video anzeigen',()=>{showVideo(j.final_url,j.id);$('result').scrollIntoView({block:'center'})}));const a=document.createElement('a');a.className='linkbutton';a.textContent='Video öffnen';a.href=j.final_url;a.target='_blank';a.rel='noopener';actions.append(a)}
   else if(j.prompt_review_pending){actions.append(button('Prompts prüfen',()=>openJob(j.id)))}
-  else{const b=button(j.resume_blocked?'Fortsetzen gesperrt':'Fortsetzen',()=>attempt(async()=>{if(busy||j.resume_blocked)return;b.disabled=true;await api('resume',{job:j.id});notice('Projekt wird fortgesetzt.');await poll()}));b.dataset.resume='';b.dataset.startsJob='true';b.dataset.blocked=String(!!j.resume_blocked);b.disabled=busy||j.resume_blocked||serverBlocked;b.title=j.resume_blocked?'Auflösung zu groß oder Speicherfehler: Servergrenzen prüfen und neues Projekt vorbereiten.':'';actions.append(b)}
-  const copy=button('Als neues Projekt vorbereiten',()=>attempt(async()=>{if(busy)return;const r=await api('job-copy',{job:j.id});fill(r.settings);await refreshHardware(false);$('master').value=r.master_prompt;notice('Prompt und Startbild übernommen, Auflösung an das Speicherprofil angepasst. Mit „Gesamten Clip erzeugen“ einen neuen Job starten.');$('master').focus();$('master').scrollIntoView({block:'center'})}));copy.dataset.resume='';copy.disabled=busy;actions.append(copy);
+  else{const b=button(j.resume_blocked?'Fortsetzen gesperrt':'Fortsetzen',()=>attempt(async()=>{if(busy||loraUploading||j.resume_blocked)return;b.disabled=true;await api('resume',{job:j.id});notice('Projekt wird fortgesetzt.');await poll()}));b.dataset.resume='';b.dataset.startsJob='true';b.dataset.blocked=String(!!j.resume_blocked);b.disabled=busy||loraUploading||j.resume_blocked||serverBlocked;b.title=j.resume_blocked?'Auflösung zu groß oder Speicherfehler: Servergrenzen prüfen und neues Projekt vorbereiten.':'';actions.append(b)}
+  const copy=button('Als neues Projekt vorbereiten',()=>attempt(async()=>{if(busy||loraUploading)return;const r=await api('job-copy',{job:j.id});fill(r.settings);await refreshHardware(false);$('master').value=r.master_prompt;notice('Prompt und Startbild übernommen, Auflösung an das Speicherprofil angepasst. Mit „Gesamten Clip erzeugen“ einen neuen Job starten.');$('master').focus();$('master').scrollIntoView({block:'center'})}));copy.dataset.resume='';copy.disabled=busy||loraUploading;actions.append(copy);
   row.append(actions);$('jobs').append(row);
  }
 }
@@ -148,7 +213,7 @@ async function loadJob(){
   $('jobSubtitle').textContent=`${j.id} · ${labels[j.status]||j.status}`;$('jobError').textContent=j.error||'';
   const reviewed=j.prompt_review_prompts||[];const reviewSection=$('promptReview');reviewSection.classList.toggle('hidden',!reviewed.length);$('promptReviewNote').textContent=j.prompt_review_pending?'Prüfe die vollständigen Prompts. ComfyUI hat noch keinen Take gestartet. Fortsetzen bestätigt diese Texte und startet den Clip.':'Die folgenden gespeicherten Texte sind die Prompts, die für die Takes verwendet werden.';
   $('promptReviewList').replaceChildren();for(const item of reviewed){const article=document.createElement('article');article.className='prompt-review-item';const title=document.createElement('h4');title.textContent=`Take ${item.take}`;const text=document.createElement('pre');text.textContent=item.text;article.append(title,text);$('promptReviewList').append(article)}
-  const continueButton=$('reviewContinue');continueButton.classList.toggle('hidden',!j.prompt_review_pending);continueButton.disabled=busy||serverBlocked;
+  const continueButton=$('reviewContinue');continueButton.classList.toggle('hidden',!j.prompt_review_pending);continueButton.disabled=busy||loraUploading||serverBlocked;
   $('jobLog').textContent=j.log||'Für dieses Projekt ist noch kein dauerhafter Verlauf gespeichert.';
   $('jobLogDownload').classList.toggle('hidden',!j.has_log);$('jobPlan').classList.toggle('hidden',!j.has_plan);
   $('jobResources').classList.toggle('hidden',!j.has_resources);
@@ -172,7 +237,7 @@ async function showJobFile(job,filename){
 function download(file){const url=URL.createObjectURL(new Blob([file.content],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=activeJob+'_'+file.filename.replaceAll('/','_');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 $('jobClose').onclick=()=>$('jobDialog').close();
 $('reviewPromptsOpen').onclick=()=>{if(lastJob)openJob(lastJob)};
-$('reviewContinue').onclick=()=>attempt(async()=>{if(busy||serverBlocked)return;$('reviewContinue').disabled=true;try{await api('resume',{job:activeJob});notice('Prompt-Prüfung bestätigt. Projekt wird fortgesetzt.');$('jobDialog').close();await poll()}catch(e){$('reviewContinue').disabled=false;throw e}});
+$('reviewContinue').onclick=()=>attempt(async()=>{if(busy||loraUploading||serverBlocked)return;$('reviewContinue').disabled=true;try{await api('resume',{job:activeJob});notice('Prompt-Prüfung bestätigt. Projekt wird fortgesetzt.');$('jobDialog').close();await poll()}catch(e){loraBusy();throw e}});
 $('jobReload').onclick=async()=>{const file=activeFile?.filename;await loadJob();if(file)await showJobFile(activeJob,file)};
 $('jobLogDownload').onclick=async()=>{try{download(await api('job-file',{job:activeJob,file:'events.jsonl'}))}catch(e){$('jobError').textContent=e.message}};
 $('jobPlan').onclick=()=>showJobFile(activeJob,'plan.json');$('fileDownload').onclick=()=>{if(activeFile)download(activeFile)};
@@ -180,4 +245,4 @@ $('jobResources').onclick=()=>showJobFile(activeJob,'resources.jsonl');
 $('refresh').onclick=()=>attempt(jobs);
 const polling=setInterval(poll,3000);
 $('shutdown').onclick=()=>attempt(async()=>{const r=await api('shutdown',{});clearInterval(polling);notice(r.message);for(const b of document.querySelectorAll('button'))b.disabled=true});
-attempt(async()=>{fill(await api('settings'));await jobs();await poll();await refreshHardware(true)});
+attempt(async()=>{fill(await api('settings'));loraInitialized=true;await refreshLoras();await jobs();await poll();await refreshHardware(true)});

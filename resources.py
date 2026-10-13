@@ -91,8 +91,8 @@ def validate_profile(c, slots):
                           "die offene Prompt-ID bleiben erhalten; ihre Auflösung wird nicht nachträglich geändert.")
     if any(s['raw_frames'] > 141 for s in slots):
         raise SafetyError('Speicherschutz: Höchstens 141 Rohframes pro Take erlaubt.')
-    if c.get('extra_images') or c.get('reference_audio') or c.get('loras'):
-        raise SafetyError('Das Speicherprofil erlaubt vorerst ein Startbild ohne zusätzliche Referenzen oder LoRAs. '
+    if c.get('extra_images') or c.get('reference_audio'):
+        raise SafetyError('Das Speicherprofil erlaubt vorerst ein Startbild ohne zusätzliche Bild- oder Audioreferenzen. '
                           'Diese benötigen eine gesonderte Speicherprüfung.')
 
 

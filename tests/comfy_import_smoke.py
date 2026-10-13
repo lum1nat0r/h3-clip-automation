@@ -7,7 +7,7 @@ import time
 import urllib.request
 
 sys.path.insert(0, '/opt/h3')
-from engine import DEFAULTS, build_graph, schedule, validate_graph
+from engine import DEFAULTS, build_graph, schedule, validate_graph, validate_lora_selection
 from staging import split_graph
 from hardware import ROLES, SOURCES
 
@@ -17,6 +17,12 @@ def main():
     for role in ROLES:
         source = SOURCES[DEFAULTS[role]]
         path = Path('/opt/comfy/models') / source['target'] / source['filename']
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    loras = [{'name': 'styles/test.safetensors', 'strength': 0.35},
+             {'name': 'characters/test [v1].safetensors', 'strength': -0.2}]
+    for lora in loras:
+        path = Path('/opt/comfy/models/loras') / lora['name']
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
     process = subprocess.Popen([sys.executable, '/opt/comfy/main.py', '--cpu', '--listen', '127.0.0.1',
@@ -33,8 +39,12 @@ def main():
                 time.sleep(1)
         else:
             raise RuntimeError('ComfyUI startup timeout')
+        choices = objects['LoraLoaderModelOnly']['input']['required']['lora_name'][0]
+        assert all(lora['name'] in choices for lora in loras)
+        settings = dict(DEFAULTS, loras=loras)
+        validate_lora_selection(settings, objects)
         for previous in (None, 'h3_automatik/check/take.mp4'):
-            graph = build_graph(DEFAULTS, 'Test', schedule(30)[1 if previous else 0], 'h3_automatik/check', 1, previous)
+            graph = build_graph(settings, 'Test', schedule(30)[1 if previous else 0], 'h3_automatik/check', 1, previous)
             validate_graph(graph, objects, skip_file_choices=True)
             for stage in split_graph(graph, 'a'*32):
                 validate_graph(stage, objects, skip_file_choices=True)

@@ -1,4 +1,4 @@
-"""Input-picture catalog and saved job diagnostics; standard library only."""
+"""Live model/input-picture catalogs and saved job diagnostics; standard library only."""
 import datetime
 import json
 import re
@@ -88,6 +88,22 @@ def image_catalog(base, settings, call=request):
         result.append({"path": path, "name": path.rsplit("/", 1)[-1], "source": item["source"], "url": url})
     result.sort(key=lambda row: (row["source"] == "server", row["name"].casefold(), row["path"]))
     return {"images": result, "warning": warning}
+
+
+def lora_catalog(settings, call=request):
+    strength = {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}
+    try:
+        objects = call(settings["comfy_url"], "/object_info/LoraLoaderModelOnly", timeout=8)
+        if "LoraLoaderModelOnly" not in objects:
+            raise JobError("ComfyUI-Node fehlt: LoraLoaderModelOnly")
+        specs = input_specs(objects["LoraLoaderModelOnly"])
+        names = choices(specs["lora_name"])
+        metadata = specs["strength_model"][1]
+        strength.update({key: metadata[key] for key in strength if key in metadata})
+        return {"loras": sorted(names, key=str.casefold), "strength": strength, "warning": ""}
+    except (JobError, KeyError, TypeError, IndexError) as error:
+        return {"loras": [], "strength": strength,
+                "warning": "ComfyUI-LoRA-Liste konnte nicht geladen werden. " + str(error)}
 
 
 def job_file(directory, filename):

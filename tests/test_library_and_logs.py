@@ -144,6 +144,69 @@ class PictureLibraryTests(unittest.TestCase):
             self.assertEqual(set(entries), {"ok.png"})
 
 
+class LoraCatalogTests(unittest.TestCase):
+    DEFAULT_STRENGTH = {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}
+
+    @staticmethod
+    def schema(names, metadata=None):
+        return {"LoraLoaderModelOnly": {"input": {"required": {
+            "model": ["MODEL"],
+            "lora_name": [names],
+            "strength_model": ["FLOAT", metadata if metadata is not None else {}],
+        }}}}
+
+    def test_catalog_preserves_exact_names_and_uses_targeted_live_schema(self):
+        names = ["styles/Zebra.safetensors", r"characters\test [v1].safetensors",
+                 "styles/alpha.safetensors", "Other.pt"]
+        calls = []
+        metadata = {"default": 0.75, "min": -2.5, "max": 3.25, "step": 0.005}
+        def call(base, route, data=None, timeout=30):
+            calls.append((base, route, data, timeout))
+            return self.schema(names, metadata)
+        settings = {**e.DEFAULTS, "comfy_url": "https://comfy.example"}
+        result = lib.lora_catalog(settings, call)
+        self.assertEqual(calls, [("https://comfy.example", "/object_info/LoraLoaderModelOnly", None, 8)])
+        self.assertEqual(result, {"loras": [names[1], names[3], names[2], names[0]],
+                                  "strength": metadata, "warning": ""})
+        self.assertEqual(names[0], "styles/Zebra.safetensors")
+
+    def test_refresh_never_retains_removed_or_saved_names(self):
+        settings = {**e.DEFAULTS, "loras": [{"name": "saved.safetensors", "strength": 1.0}]}
+        available = ["removed.safetensors", "current.safetensors"]
+        def call(*args, **kwargs):
+            return self.schema(list(available))
+        self.assertEqual(lib.lora_catalog(settings, call)["loras"],
+                         ["current.safetensors", "removed.safetensors"])
+        available.remove("removed.safetensors")
+        self.assertEqual(lib.lora_catalog(settings, call)["loras"], ["current.safetensors"])
+        available.clear()
+        self.assertEqual(lib.lora_catalog(settings, call),
+                         {"loras": [], "strength": self.DEFAULT_STRENGTH, "warning": ""})
+
+    def test_missing_loader_and_server_failure_return_empty_catalog_and_defaults(self):
+        settings = {**e.DEFAULTS, "loras": [{"name": "saved.safetensors", "strength": 1.0}]}
+        def offline(*args, **kwargs):
+            raise e.JobError("Server nicht erreichbar")
+        for call, message in ((lambda *args, **kwargs: {}, "LoraLoaderModelOnly"),
+                              (offline, "Server nicht erreichbar")):
+            with self.subTest(message=message):
+                result = lib.lora_catalog(settings, call)
+                self.assertEqual(result["loras"], [])
+                self.assertEqual(result["strength"], self.DEFAULT_STRENGTH)
+                self.assertIn(message, result["warning"])
+
+    def test_optional_inputs_and_options_choices_follow_live_metadata(self):
+        schema = {"LoraLoaderModelOnly": {"input": {"optional": {
+            "lora_name": ["COMBO", {"options": [r"nested\test [v2].safetensors"]}],
+            "strength_model": ["FLOAT", {"min": -0.125, "max": 0.875}],
+        }}}}
+        result = lib.lora_catalog(e.DEFAULTS, lambda *args, **kwargs: schema)
+        self.assertEqual(result["loras"], [r"nested\test [v2].safetensors"])
+        self.assertEqual(result["strength"],
+                         {**self.DEFAULT_STRENGTH, "min": -0.125, "max": 0.875})
+        self.assertEqual(result["warning"], "")
+
+
 class DiagnosticFilesTests(unittest.TestCase):
     def test_legacy_job_explains_missing_responses_and_retains_error(self):
         with tempfile.TemporaryDirectory() as temp:

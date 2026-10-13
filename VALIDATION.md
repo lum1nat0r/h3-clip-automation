@@ -41,3 +41,57 @@ Es wurden keine Modellgewichte heruntergeladen und keine Cloud-Instanzen gebucht
 
 Die wiederholbaren Testbefehle und Cloud-Einstellungen stehen in
 [DEPLOYMENT.md](DEPLOYMENT.md). CPU-Tests ersetzen keine GPU-Abnahme.
+
+## LoRA-Erweiterung
+
+Die folgenden Prüfungen betreffen die LoRA-Erweiterung, nicht die historische
+Stack-Abnahme oben:
+
+- `python -m unittest discover -s tests -v`: 152 Tests unter Linux erfolgreich,
+  ohne Skip. Unter Windows ebenfalls erfolgreich, mit zwei POSIX-/Linux-Skips.
+  `node --check ui.js` erfolgreich.
+- Geordnete Root-/Fortsetzungs-/Samplinggraphen mit zwei, 40 und 100 LoRAs geprüft.
+  Der isolierte FakeServices-Runner beendet sieben Takes und den Export; verlorene
+  Samplingantworten werden ohne doppelte Annahme wiederaufgenommen. Keine Aussage
+  über tatsächlich gerenderte Bild-/Tonqualität.
+- Echte lokale App mit separatem `H3_DATA_DIR` und dateisystemgestütztem
+  ComfyUI-Protokollserver: 36-MiB-Rohupload mit identischem SHA-256, Oversize-Header,
+  kurzer Körper, Lease-Ablehnung und keine verbliebenen `.part`-Dateien geprüft.
+- Chromium: Desktop und 390 px visuell geprüft. Geordnete Namen/Stärken
+  `0.35`/`-0.2` nach Speichern/Reload, Hinzufügen/Entfernen, `loras: []`,
+  zwei Uploads, erneute Auswahl derselben Datei, Uploadsperren beim Polling,
+  Fokus der neuen Zeile, `listed: false`, Serverfehler und fehlende Dateien geprüft.
+  Verspätete Antworten und Wiederherstellung nach einem ungespeicherten
+  Serverwechsel ändern keine Auswahl. Leere Stärke sperrt Speichern, nicht Discovery.
+- Echte Linux-App/Nginx/SSH: TLS und beide Logins, Auth-/Cross-Site-Ablehnung,
+  LoRA-Upload über 34 MiB, bisherige Grenzen anderer Routen, Hash/Persistenz,
+  Lesen der veröffentlichten Gewichte unter anderer UID und keine Job-Autowiederaufnahme.
+- Echtes ComfyUI 0.37.0 auf CPU: Timeline/Inspire geladen; LoRA-Discovery sowie
+  geordnete Root-, Fortsetzungs- und dreiphasige Graphen gegen echte Schemas geprüft,
+  ohne Gewichte zu laden oder Generierungsaufträge einzureichen.
+- Echter Supervisor-/ComfyUI-/Ollama-/App-Stack auf CPU: kleine gültige
+  Safetensors-Testdatei über App/Nginx gespeichert und gelistet. Nach
+  Container-Neuerstellung mit eigenem Volume bleiben Dateiname, SHA-256 und
+  echte Discovery erhalten; cgroup-Telemetrie und geordnetes Herunterfahren geprüft.
+
+Docker Desktop war nicht erreichbar. Die Linux-Prüfungen verwendeten deshalb das
+vorhandene Podman-Image `localhost/h3-portable-validation:verified`
+(`00ab6277b318`) mit dem aktuellen Quellcode read-only unter `/opt/h3`.
+Kein neuer Docker-/Image-Build wurde durchgeführt. Container hatten kein externes
+Netzwerk, keine veröffentlichten Hostports und keine GPU; temporäre Appdaten und
+ein eigens angelegtes Recreation-Volume isolierten bestehende Jobs/Modelle.
+Testdienste, temporäre Daten und das Recreation-Volume wurden entfernt.
+
+Eine GPU-Abnahme mit H3-Basismodellen und bekannter H3-kompatibler LoRA wurde
+nicht ausgeführt. Upload und Discovery belegen weder Modellwirkung noch
+GPU-Speichersicherheit; die vorhandenen Speicherwächter bleiben unverändert aktiv.
+
+### UI-Stärke von 0 bis 1
+
+Der Eingabebereich wurde anschließend auf 0 bis 1 mit Schrittweite 0,01 begrenzt,
+auch nach Live-Katalogaktualisierung. In der echten Oberfläche mit isolierten
+Appdaten wurden 0, 1 und 0.5 gespeichert; Reload stellt 0.5 wieder her.
+−0.01 und 1.01 werden beim Speichern zurückgewiesen. Der aus den gespeicherten
+Settings erzeugte Graph enthält unverändert `strength_model: 0.5`.
+Bestehende Jobwerte bleiben unverändert; Engine und ComfyUI-Corebereich wurden
+nicht eingeschränkt. JavaScript-Syntaxprüfung erfolgreich, keine GPU-Generierung.

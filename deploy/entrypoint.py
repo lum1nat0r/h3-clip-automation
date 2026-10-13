@@ -28,16 +28,7 @@ def nginx_config(tls_mode):
     listeners = ''
     for public, internal in ((8080, 8765), (8081, 8188)):
         host = '127.0.0.1:8765' if internal == 8765 else '$http_host'
-        listeners += f'''
-    server {{
-        listen {public}{' ssl' if tls_mode != 'proxy' else ''};
-        server_name _;
-        {tls}
-        auth_basic "H3";
-        auth_basic_user_file /run/h3/htpasswd;
-        if ($blocked_cross_site) {{ return 403; }}
-        location / {{
-            proxy_pass http://127.0.0.1:{internal};
+        proxy = f'''            proxy_pass http://127.0.0.1:{internal};
             proxy_http_version 1.1;
             proxy_set_header Host {host};
             proxy_set_header Authorization "";
@@ -47,7 +38,22 @@ def nginx_config(tls_mode):
             proxy_set_header X-Forwarded-Host "";
             proxy_buffering off;
             proxy_request_buffering off;
-            proxy_read_timeout 3600s;
+            proxy_read_timeout 3600s;'''
+        upload = (f'''        location = /api/lora-upload {{
+            client_max_body_size 2048m;
+{proxy}
+        }}
+''' if internal == 8765 else '')
+        listeners += f'''
+    server {{
+        listen {public}{' ssl' if tls_mode != 'proxy' else ''};
+        server_name _;
+        {tls}
+        auth_basic "H3";
+        auth_basic_user_file /run/h3/htpasswd;
+        if ($blocked_cross_site) {{ return 403; }}
+{upload}        location / {{
+{proxy}
         }}
     }}
 '''
@@ -119,8 +125,8 @@ def configure(env=None):
     if not re.fullmatch(r'/[A-Za-z0-9_./-]+', str(root)) or '..' in root.parts:
         raise ValueError('H3_ROOT muss ein absoluter Linux-Pfad ohne Leerzeichen sein.')
     root = root.resolve()
-    for path in (RUNTIME, root, *(root / p for p in ('app', 'downloads', 'comfy/models', 'comfy/input',
-                 'comfy/output', 'comfy/temp', 'comfy/user', 'ollama', 'ollama/models', 'home', 'tls'))):
+    for path in (RUNTIME, root, *(root / p for p in ('app', 'downloads', 'comfy/models', 'comfy/models/loras',
+                 'comfy/input', 'comfy/output', 'comfy/temp', 'comfy/user', 'ollama', 'ollama/models', 'home', 'tls'))):
         path.mkdir(parents=True, exist_ok=True)
         os.chown(path, UID, GID)
     RUNTIME.chmod(0o700)
@@ -154,12 +160,13 @@ def configure(env=None):
             os.chown(RUNTIME / target, UID, GID)
     env.update(H3_CONTAINER='1', H3_ROOT=str(root), H3_DATA_DIR=str(root / 'app'),
                HOME=str(root / 'home'), OLLAMA_MODELS=str(root / 'ollama/models'),
+               H3_LORA_DIR=str(root / 'comfy/models/loras'), H3_LORA_COMFY_URL='http://127.0.0.1:8188',
                OLLAMA_HOST='127.0.0.1:11434', OLLAMA_MAX_LOADED_MODELS='1', OLLAMA_NUM_PARALLEL='1',
                OLLAMA_KEEP_ALIVE='0', OLLAMA_NO_CLOUD='1', HF_HUB_DISABLE_TELEMETRY='1')
     allow = ('H3_CONTAINER', 'H3_ROOT', 'H3_DATA_DIR', 'H3_MEMORY_MODE', 'H3_RAM_BUDGET_GIB',
              'HF_TOKEN', 'HF_HUB_DISABLE_TELEMETRY', 'HOME', 'OLLAMA_MODELS')
     private_file(RUNTIME / 'model-env.json', json.dumps({k: env[k] for k in allow if k in env}))
-    private_file(RUNTIME / 'models.yaml', f'h3:\n  base_path: {root}/comfy/models\n  diffusion_models: diffusion_models\n  text_encoders: text_encoders\n  vae: vae\n')
+    private_file(RUNTIME / 'models.yaml', f'h3:\n  base_path: {root}/comfy/models\n  diffusion_models: diffusion_models\n  text_encoders: text_encoders\n  vae: vae\n  loras: loras\n')
     private_file(RUNTIME / 'nginx.conf', nginx_config(mode))
     public_key = env.get('H3_SSH_PUBLIC_KEY', '')
     if public_key:

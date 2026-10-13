@@ -143,6 +143,23 @@ class AutomationTests(unittest.TestCase):
         r.new({"image": "h3_automatik/upload.png", "seconds": seconds, "seed": 123}, "A calm scene with no speech.")
         return r
 
+    def test_lora_normalization_preserves_names_order_duplicates_and_bounds(self):
+        name = r"characters\test [v1] @ (copy).safetensors"
+        loras = [{'name': name, 'strength': strength} for strength in (-100, 0, 100)]
+        self.assertEqual(e.normalize_settings({'loras': loras})['loras'], loras)
+        self.assertEqual(e.normalize_settings({})['loras'], [])
+        for invalid in (None, {}, [None], [{}], [{'name': 'x'}],
+                        [{'name': ' ', 'strength': 1}],
+                        [{'name': 'x\x00', 'strength': 1}],
+                        [{'name': 'x\n', 'strength': 1}],
+                        [{'name': 'x\r', 'strength': 1}],
+                        [{'name': 3, 'strength': 1}]):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(e.JobError, 'LoRA'):
+                e.normalize_settings({'loras': invalid})
+        for strength in (True, False, '1', None, float('nan'), float('inf'), -float('inf'), -100.01, 100.01, 10**1000):
+            with self.subTest(strength=strength), self.assertRaisesRegex(e.JobError, 'LoRA 2: Stärke'):
+                e.normalize_settings({'loras': [{'name': 'ok', 'strength': 1}, {'name': 'bad', 'strength': strength}]})
+
     def test_uploaded_main_and_extra_images_checked_outside_dropdown(self):
         fake = FakeServices()
         c = e.normalize_settings({"image": "h3_automatik/upload.png",
